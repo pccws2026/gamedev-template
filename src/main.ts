@@ -1,17 +1,17 @@
 import Phaser from 'phaser';
-import { HelloScene } from './scenes/HelloScene';
+import { GameScene } from './scenes/GameScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: 'game-container',
-  backgroundColor: '#ffffff',
+  backgroundColor: '#101827',
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
     width: 1280,
     height: 720,
   },
-  scene: [HelloScene],
+  scene: [GameScene],
 };
 
 const game = new Phaser.Game(config);
