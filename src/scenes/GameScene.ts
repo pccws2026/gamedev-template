@@ -397,6 +397,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private finish(cleared: boolean): void {
-    this.scene.start('GameOverScene', { cleared, score: this.score });
+    this.scene.transition({
+      target: 'GameOverScene',
+      duration: 2500,
+      data: { cleared, score: this.score },
+    });
   }
 }
