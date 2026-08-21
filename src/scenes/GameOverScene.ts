@@ -13,20 +13,20 @@ export class GameOverScene extends Phaser.Scene {
   create(): void {
     const cleared = this.registry.get('cleared') === true;
     const score = this.registry.get('finalScore') as number;
-    this.cameras.main.setBackgroundColor(cleared ? '#102d2a' : '#2a111b');
-    if (!cleared) this.cameras.main.fadeIn(1500, 8, 17, 31);
+    this.cameras.main.setBackgroundColor(cleared ? '#202014' : '#2a111b');
+    this.cameras.main.fadeIn(1500, 8, 17, 31);
     this.add.text(640, 250, cleared ? 'MISSION CLEAR' : 'GAME OVER', {
       fontFamily: 'Arial Black, Noto Sans JP, sans-serif',
       fontStyle: 'bold',
       fontSize: '60px',
-      color: cleared ? '#7dffcf' : '#ff3b52',
-      stroke: cleared ? '#d8fff2' : '#ffd6dc',
-      strokeThickness: 4,
+      color: cleared ? '#e0e45a' : '#ff3b52',
+      stroke: cleared ? '#fff36a' : '#ffd6dc',
+      strokeThickness: cleared ? 7 : 4,
       shadow: {
         offsetX: 0,
         offsetY: 0,
-        color: cleared ? '#43ffca' : '#ff243f',
-        blur: 22,
+        color: cleared ? '#d8c300' : '#ff243f',
+        blur: 14,
         stroke: true,
         fill: true,
       },
