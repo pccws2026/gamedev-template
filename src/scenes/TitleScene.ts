@@ -49,23 +49,33 @@ export class TitleScene extends Phaser.Scene {
       titleStars.fillTriangle(x + size * 2, y, x, y - size / 2, x, y + size / 2);
     });
 
-    this.add.text(640, 218, 'STARLINE\nDEFENDER', {
-      fontFamily: 'Arial Black, Noto Sans JP, sans-serif',
-      fontStyle: 'bold',
-      fontSize: '72px',
-      lineSpacing: -8,
-      color: '#071a42',
-      stroke: '#d8f8ff',
-      strokeThickness: 4,
-      shadow: {
-        offsetX: 0,
-        offsetY: 0,
-        color: '#43cfff',
-        blur: 22,
-        stroke: true,
-        fill: true,
-      },
-    }).setOrigin(0.5);
+    const createTitleLine = (text: string, y: number) => {
+      const titleLine = this.add.text(640, y, text, {
+        fontFamily: 'Arial Black, Noto Sans JP, sans-serif',
+        fontStyle: 'bold',
+        fontSize: '90px',
+        color: '#071a42',
+        stroke: '#8fd9eb',
+        strokeThickness: 4,
+        shadow: {
+          offsetX: 0,
+          offsetY: 0,
+          color: '#43cfff',
+          blur: 22,
+          stroke: true,
+          fill: true,
+        },
+      }).setOrigin(0.5);
+      const titleGloss = titleLine.context.createLinearGradient(0, 0, 0, titleLine.height);
+      titleGloss.addColorStop(0, '#b8e7f0');
+      titleGloss.addColorStop(0.18, '#78bfd4');
+      titleGloss.addColorStop(0.45, '#24477e');
+      titleGloss.addColorStop(1, '#020817');
+      titleLine.setFill(titleGloss);
+    };
+
+    createTitleLine('STARLINE', 174);
+    createTitleLine('DEFENDER', 284);
     this.add.text(640, 366, '矢印キー: 移動    SPACE: 発射', {
       fontFamily: 'sans-serif',
       fontSize: '24px',
