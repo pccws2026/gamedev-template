@@ -36,6 +36,8 @@ export class GameScene extends Phaser.Scene {
   private readonly bombExplosionDuration = 1000;
   private readonly fireCooldown = 0.2;
   private readonly hudHeight = 78;
+  private readonly aimGaugeSpeed = 1.5;
+  private readonly maxShotSpread = 56;
 
   private state: GameState = 'title';
   private remainingTime = this.gameDuration;
@@ -44,6 +46,9 @@ export class GameScene extends Phaser.Scene {
   private comboRemaining = 0;
   private spawnElapsed = 0;
   private cooldownRemaining = 0;
+  private isAiming = false;
+  private aimGauge = 0;
+  private aimGaugeDirection = 1;
   private cursorX = this.gameWidth / 2;
   private cursorY = this.gameHeight / 2;
   private targets: Target[] = [];
@@ -89,6 +94,16 @@ export class GameScene extends Phaser.Scene {
     this.remainingTime = Math.max(0, this.remainingTime - elapsed);
     this.cooldownRemaining = Math.max(0, this.cooldownRemaining - elapsed);
     this.comboRemaining = Math.max(0, this.comboRemaining - elapsed);
+    if (this.isAiming) {
+      this.aimGauge += this.aimGaugeDirection * this.aimGaugeSpeed * elapsed;
+      if (this.aimGauge >= 1) {
+        this.aimGauge = 1;
+        this.aimGaugeDirection = -1;
+      } else if (this.aimGauge <= 0) {
+        this.aimGauge = 0;
+        this.aimGaugeDirection = 1;
+      }
+    }
     if (this.comboRemaining === 0) {
       this.combo = 0;
       this.comboText.setVisible(false);
@@ -136,8 +151,21 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (!this.isAiming) {
+      this.isAiming = true;
+      this.aimGauge = 0;
+      this.aimGaugeDirection = 1;
+      return;
+    }
+
+    this.isAiming = false;
     this.cooldownRemaining = this.fireCooldown;
-    const cursor = new Phaser.Geom.Circle(this.cursorX, this.cursorY, this.cursorRadius);
+    const shotSpread = (1 - this.aimGauge) * this.maxShotSpread;
+    const shotAngle = Phaser.Math.FloatBetween(0, Math.PI * 2);
+    const shotDistance = Phaser.Math.FloatBetween(0, shotSpread);
+    const shotX = Phaser.Math.Clamp(this.cursorX + Math.cos(shotAngle) * shotDistance, 0, this.gameWidth);
+    const shotY = Phaser.Math.Clamp(this.cursorY + Math.sin(shotAngle) * shotDistance, this.hudHeight, this.gameHeight);
+    const cursor = new Phaser.Geom.Circle(shotX, shotY, this.cursorRadius);
     let hitTarget = false;
     for (const target of [...this.targets]) {
       const targetCircle = new Phaser.Geom.Circle(target.shape.x, target.shape.y, target.radius);
@@ -166,6 +194,9 @@ export class GameScene extends Phaser.Scene {
     this.clearScoreFeedback();
     this.spawnElapsed = 0;
     this.cooldownRemaining = 0;
+    this.isAiming = false;
+    this.aimGauge = 0;
+    this.aimGaugeDirection = 1;
     this.hudText.setVisible(true);
     this.updateHud();
     this.drawCursor();
@@ -176,6 +207,7 @@ export class GameScene extends Phaser.Scene {
     this.clearTargets();
     this.clearExplosions();
     this.cursorGraphics.clear();
+    this.isAiming = false;
     this.comboText.setVisible(false);
     this.clearScoreFeedback();
     this.hudText.setVisible(false);
@@ -483,16 +515,29 @@ export class GameScene extends Phaser.Scene {
     if (this.state !== 'playing') {
       return;
     }
-    const cursorColor = this.cooldownRemaining > 0 ? 0xef4444 : 0x67e8f9;
+    const cursorColor = this.cooldownRemaining > 0 ? 0xef4444 : this.isAiming ? 0xf8fafc : 0x67e8f9;
     this.cursorGraphics.lineStyle(3, cursorColor, 1);
     this.cursorGraphics.strokeCircle(this.cursorX, this.cursorY, this.cursorRadius);
     this.cursorGraphics.lineBetween(this.cursorX - 32, this.cursorY, this.cursorX + 32, this.cursorY);
     this.cursorGraphics.lineBetween(this.cursorX, this.cursorY - 32, this.cursorX, this.cursorY + 32);
+    if (this.isAiming) {
+      const gaugeBaseRadius = this.cursorRadius + 12;
+      this.cursorGraphics.lineStyle(5, 0x334155, 0.85);
+      this.cursorGraphics.beginPath();
+      this.cursorGraphics.arc(this.cursorX, this.cursorY, gaugeBaseRadius, -Math.PI / 2, Math.PI * 1.5);
+      this.cursorGraphics.strokePath();
+      const gaugeColor = this.aimGauge >= 0.66 ? 0x86efac : this.aimGauge >= 0.33 ? 0xfacc15 : 0xfb7185;
+      this.cursorGraphics.lineStyle(5, gaugeColor, 1);
+      this.cursorGraphics.beginPath();
+      this.cursorGraphics.arc(this.cursorX, this.cursorY, gaugeBaseRadius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * this.aimGauge);
+      this.cursorGraphics.strokePath();
+    }
   }
 
   private showTitle(): void {
     this.clearScreenTexts();
     this.state = 'title';
+    this.isAiming = false;
     this.hudText.setVisible(false);
     this.comboText.setVisible(false);
     this.cursorGraphics.clear();
