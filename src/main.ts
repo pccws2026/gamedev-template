@@ -1,17 +1,20 @@
 import Phaser from 'phaser';
 import { GameScene } from './scenes/GameScene';
+import { MahjongScene } from './scenes/MahjongScene';
+
+const isMahjong = window.location.pathname.startsWith('/double_maajan');
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: 'game-container',
-  backgroundColor: '#101827',
+  backgroundColor: isMahjong ? '#14532d' : '#101827',
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
     width: 1280,
     height: 720,
   },
-  scene: [GameScene],
+  scene: isMahjong ? [MahjongScene] : [GameScene],
 };
 
 const game = new Phaser.Game(config);

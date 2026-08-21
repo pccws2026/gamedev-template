@@ -5,6 +5,7 @@ type GameState = 'title' | 'playing' | 'clear' | 'gameover';
 type Target = {
   shape: Phaser.GameObjects.Arc;
   visualShapes: Phaser.GameObjects.Arc[];
+  radius: number;
   isBomb: boolean;
   age: number;
   velocityX: number;
@@ -21,6 +22,7 @@ export class GameScene extends Phaser.Scene {
   private readonly scoreFeedbackDuration = 1000;
   private readonly scoreFeedbackSpacing = 48;
   private readonly targetRadius = 33.6;
+  private readonly bombRadius = this.targetRadius * 0.9;
   private readonly maxTargetCount = 20;
   private readonly cursorRadius = 22;
   private readonly initialSpawnInterval = 0.5;
@@ -29,7 +31,7 @@ export class GameScene extends Phaser.Scene {
   private readonly minTargetSpeed = 100;
   private readonly maxTargetSpeed = 300;
   private readonly bombChance = 0.25;
-  private readonly explosionRadius = this.targetRadius * 6.5;
+  private readonly explosionRadius = this.bombRadius * 6.5;
   private readonly targetExplosionDuration = 200;
   private readonly bombExplosionDuration = 1000;
   private readonly fireCooldown = 0.2;
@@ -138,7 +140,7 @@ export class GameScene extends Phaser.Scene {
     const cursor = new Phaser.Geom.Circle(this.cursorX, this.cursorY, this.cursorRadius);
     let hitTarget = false;
     for (const target of [...this.targets]) {
-      const targetCircle = new Phaser.Geom.Circle(target.shape.x, target.shape.y, this.targetRadius);
+      const targetCircle = new Phaser.Geom.Circle(target.shape.x, target.shape.y, target.radius);
       if (Phaser.Geom.Intersects.CircleToCircle(cursor, targetCircle)) {
         this.resolveHit(target);
         hitTarget = true;
@@ -188,12 +190,13 @@ export class GameScene extends Phaser.Scene {
     for (let attempt = 0; attempt < 30; attempt += 1) {
       const x = Phaser.Math.Between(this.targetRadius + 20, this.gameWidth - this.targetRadius - 20);
       const y = Phaser.Math.Between(this.hudHeight + this.targetRadius + 20, this.gameHeight - this.targetRadius - 20);
-      const overlapsTarget = this.targets.some((target) => Phaser.Math.Distance.Between(x, y, target.shape.x, target.shape.y) < this.targetRadius * 2);
+      const isBomb = Phaser.Math.FloatBetween(0, 1) < this.bombChance;
+      const radius = isBomb ? this.bombRadius : this.targetRadius;
+      const overlapsTarget = this.targets.some((target) => Phaser.Math.Distance.Between(x, y, target.shape.x, target.shape.y) < radius + target.radius);
       if (!overlapsTarget) {
-        const isBomb = Phaser.Math.FloatBetween(0, 1) < this.bombChance;
         const visualShapes = isBomb
           ? [
-              this.add.circle(x, y, this.targetRadius, 0x050505).setStrokeStyle(4, 0xffffff),
+              this.add.circle(x, y, radius, 0x050505).setStrokeStyle(4, 0xffffff),
             ]
           : [
               this.add.circle(x, y, this.targetRadius, 0xffffff),
@@ -210,6 +213,7 @@ export class GameScene extends Phaser.Scene {
         this.targets.push({
           shape: target,
           visualShapes,
+          radius,
           isBomb,
           age: 0,
           velocityX: hasDirection ? (directionX / normalizedLength) * velocity : 0,
@@ -445,7 +449,8 @@ export class GameScene extends Phaser.Scene {
         const deltaX = second.shape.x - first.shape.x;
         const deltaY = second.shape.y - first.shape.y;
         const distance = Math.hypot(deltaX, deltaY);
-        if (distance >= this.targetRadius * 2) {
+        const collisionDistance = first.radius + second.radius;
+        if (distance >= collisionDistance) {
           continue;
         }
 
@@ -459,7 +464,7 @@ export class GameScene extends Phaser.Scene {
           second.velocityY -= relativeVelocity * normalY;
         }
 
-        const separation = (this.targetRadius * 2 - distance) / 2;
+        const separation = (collisionDistance - distance) / 2;
         first.shape.x -= normalX * separation;
         first.shape.y -= normalY * separation;
         second.shape.x += normalX * separation;
