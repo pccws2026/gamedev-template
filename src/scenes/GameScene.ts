@@ -21,6 +21,13 @@ const PLAYER_SHOT_SCORE = -2;
 const PLAYER_DAMAGE_SCORE = -30;
 const ENEMY_DEFEAT_SCORE = 60;
 const BOSS_DEFEAT_SCORE = 500;
+const HP_SHAKE_OFFSET_X = 16;
+const HP_SHAKE_OFFSET_Y = 8;
+const HP_MAIN_SHAKE_OFFSET_X = 5;
+const HP_MAIN_SHAKE_OFFSET_Y = 5;
+const HP_SHAKE_DURATION = 45;
+const HP_SHAKE_REPEAT = 3;
+const HP_CLONE_ALPHA = 0.35;
 
 type BossPattern = 'A' | 'B';
 type PhysicsObject =
@@ -54,6 +61,8 @@ export class GameScene extends Phaser.Scene {
   private hpText!: Phaser.GameObjects.Text;
   private timeText!: Phaser.GameObjects.Text;
   private bossText!: Phaser.GameObjects.Text;
+  private hpTextBaseX = 24;
+  private hpTextBaseY = 54;
 
   constructor() {
     super('GameScene');
@@ -84,8 +93,8 @@ export class GameScene extends Phaser.Scene {
     this.physics.add.overlap(this.enemyBullets, this.player, this.hitPlayer, undefined, this);
     this.physics.add.overlap(this.enemies, this.player, this.touchEnemy, undefined, this);
 
-    this.scoreText = this.add.text(24, 20, '', this.hudStyle());
-    this.hpText = this.add.text(24, 54, '', this.hudStyle());
+    this.scoreText = this.add.text(24, 20, '', this.scoreStyle());
+    this.hpText = this.add.text(this.hpTextBaseX, this.hpTextBaseY, '', this.hpStyle());
     this.timeText = this.add.text(1060, 20, '', this.hudStyle());
     this.bossText = this.add.text(460, 20, '', this.hudStyle()).setColor('#ff8b94');
     this.updateHud();
@@ -137,6 +146,42 @@ export class GameScene extends Phaser.Scene {
 
   private hudStyle(): Phaser.Types.GameObjects.Text.TextStyle {
     return { fontFamily: 'sans-serif', fontSize: '22px', color: '#d9e8ff' };
+  }
+
+  private scoreStyle(): Phaser.Types.GameObjects.Text.TextStyle {
+    return {
+      fontFamily: 'sans-serif',
+      fontSize: '22px',
+      color: '#e8fbff',
+      stroke: '#b9eeff',
+      strokeThickness: 1,
+      shadow: {
+        offsetX: 0,
+        offsetY: 0,
+        color: '#55d9ff',
+        blur: 12,
+        stroke: true,
+        fill: true,
+      },
+    };
+  }
+
+  private hpStyle(): Phaser.Types.GameObjects.Text.TextStyle {
+    return {
+      fontFamily: 'sans-serif',
+      fontSize: '22px',
+      color: '#ffd1e1',
+      stroke: '#ff9fc2',
+      strokeThickness: 1,
+      shadow: {
+        offsetX: 0,
+        offsetY: 0,
+        color: '#ff5f9d',
+        blur: 12,
+        stroke: true,
+        fill: true,
+      },
+    };
   }
 
   private updatePlayer(): void {
@@ -307,10 +352,47 @@ export class GameScene extends Phaser.Scene {
   private damagePlayer(amount: number): void {
     this.hp -= amount;
     this.score += PLAYER_DAMAGE_SCORE;
+    this.shakeMainHpText();
+    this.createShakingHpClone();
     this.invincibleUntil = this.elapsed + PLAYER_INVINCIBLE;
     this.player.setAlpha(0.45);
     this.time.delayedCall(PLAYER_INVINCIBLE, () => this.player.setAlpha(1), undefined, this);
     if (this.hp <= 0) this.finish(false);
+  }
+
+  private shakeMainHpText(): void {
+    const offsetX = Phaser.Math.Between(-HP_MAIN_SHAKE_OFFSET_X, HP_MAIN_SHAKE_OFFSET_X);
+    const offsetY = Phaser.Math.Between(-HP_MAIN_SHAKE_OFFSET_Y, HP_MAIN_SHAKE_OFFSET_Y);
+    this.tweens.killTweensOf(this.hpText);
+    this.hpText.setPosition(this.hpTextBaseX, this.hpTextBaseY);
+    this.tweens.add({
+      targets: this.hpText,
+      x: this.hpTextBaseX + offsetX,
+      y: this.hpTextBaseY + offsetY,
+      duration: HP_SHAKE_DURATION,
+      ease: 'Sine.easeInOut',
+      yoyo: true,
+      repeat: HP_SHAKE_REPEAT,
+      onComplete: () => this.hpText.setPosition(this.hpTextBaseX, this.hpTextBaseY),
+    });
+  }
+
+  private createShakingHpClone(): void {
+    const offsetX = Phaser.Math.Between(-HP_SHAKE_OFFSET_X, HP_SHAKE_OFFSET_X);
+    const offsetY = Phaser.Math.Between(-HP_SHAKE_OFFSET_Y, HP_SHAKE_OFFSET_Y);
+    const hpClone = this.add
+      .text(this.hpTextBaseX, this.hpTextBaseY, `HP  ${Math.max(0, this.hp)}/${PLAYER_HP}`, this.hpStyle())
+      .setAlpha(HP_CLONE_ALPHA);
+    this.tweens.add({
+      targets: hpClone,
+      x: this.hpTextBaseX + offsetX,
+      y: this.hpTextBaseY + offsetY,
+      duration: HP_SHAKE_DURATION,
+      ease: 'Sine.easeInOut',
+      yoyo: true,
+      repeat: HP_SHAKE_REPEAT,
+      onComplete: () => hpClone.destroy(),
+    });
   }
 
   private createExplosion(x: number, y: number, size: number, duration = 500): void {
@@ -397,10 +479,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   private finish(cleared: boolean): void {
-    this.scene.transition({
-      target: 'GameOverScene',
-      duration: 2500,
-      data: { cleared, score: this.score },
-    });
+    this.scene.start('GameOverScene', { cleared, score: this.score });
   }
 }
