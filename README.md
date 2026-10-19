@@ -51,3 +51,5 @@ this.load.image('logo', 'logo.png'); // public/logo.png
 
 Phaser 4 の公式ドキュメントは `node_modules/phaser/skills/<トピック>/SKILL.md` に 28 トピック分同梱されている。
 API を書く前に該当トピックを読ませると、v3 と v4 の取り違えを防げる。詳細は `AGENTS.md` を参照。
+
+ああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ
