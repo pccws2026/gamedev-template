@@ -4,7 +4,14 @@ import { HelloScene } from './scenes/HelloScene';
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
   parent: 'game-container',
-  backgroundColor: '#ffffff',
+  backgroundColor: '#101827',
+  physics: {
+    default: 'arcade',
+    arcade: {
+      gravity: { x: 0, y: 520 },
+      debug: false,
+    },
+  },
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
