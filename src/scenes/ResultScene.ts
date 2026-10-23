@@ -4,6 +4,7 @@ import type { GameMode } from '../game/GameMode';
 import {
   addRankingEntry,
   getRankingPosition,
+  type ReplayFrame,
   type RankingCategory,
 } from '../game/Ranking';
 
@@ -16,7 +17,10 @@ interface ResultData {
   clearTimeSeconds: number;
   mode: GameMode;
   seedWasSet: boolean;
+  seed: number;
+  replay: ReplayFrame[];
   rankingEligible: boolean;
+  developerRankingEligible: boolean;
   reason?: 'timeout' | 'defeated' | 'clear';
 }
 
@@ -29,7 +33,10 @@ export class ResultScene extends Phaser.Scene {
   private clearTimeSeconds = 0;
   private mode: GameMode = 'limited';
   private seedWasSet = false;
+  private seed = 0;
+  private replay: ReplayFrame[] = [];
   private rankingEligible = false;
+  private developerRankingEligible = false;
   private reason: ResultData['reason'] = 'timeout';
   private rankingCategory?: RankingCategory;
   private rankingName = '';
@@ -50,7 +57,10 @@ export class ResultScene extends Phaser.Scene {
     this.clearTimeSeconds = data.clearTimeSeconds;
     this.mode = data.mode;
     this.seedWasSet = data.seedWasSet;
+    this.seed = data.seed;
+    this.replay = data.replay;
     this.rankingEligible = data.rankingEligible;
+    this.developerRankingEligible = data.developerRankingEligible;
     this.reason = data.reason ?? 'timeout';
     this.rankingCategory = undefined;
     this.rankingName = '';
@@ -90,12 +100,15 @@ export class ResultScene extends Phaser.Scene {
       align: 'center',
     }).setOrigin(0.5);
 
-    if (isClear && this.rankingEligible) {
-      const category: RankingCategory = this.seedWasSet ? 'SSG' : 'RSG';
+    if (isClear && (this.rankingEligible || this.developerRankingEligible)) {
+      const category: RankingCategory = this.rankingEligible
+        ? this.seedWasSet ? 'SSG' : 'RSG'
+        : 'DEV';
       const position = getRankingPosition(category, this.clearTimeSeconds);
       if (position !== null) {
         this.rankingCategory = category;
-        this.add.text(640, 390, `${category}ランキング ${position}位`, {
+        const categoryLabel = category === 'DEV' ? '開発' : category;
+        this.add.text(640, 390, `${categoryLabel}ランキング ${position}位`, {
           fontFamily: 'sans-serif',
           fontSize: '26px',
           color: '#f5d58a',
@@ -117,7 +130,7 @@ export class ResultScene extends Phaser.Scene {
         }).setOrigin(0.5);
       }
     } else if (isClear) {
-      this.add.text(640, 430, 'システム設定の変更中はランキング対象外です', {
+      this.add.text(640, 430, 'ランキング登録対象外です', {
         fontFamily: 'sans-serif',
         fontSize: '18px',
         color: '#b7c9d8',
@@ -132,6 +145,7 @@ export class ResultScene extends Phaser.Scene {
 
     this.input.keyboard?.on('keydown', this.handleNameInput, this);
     this.input.keyboard?.on('keydown-ENTER', this.handleEnter, this);
+    this.input.keyboard?.on('keydown-ESC', this.returnToTitle, this);
   }
 
   private handleNameInput(event: KeyboardEvent): void {
@@ -160,6 +174,8 @@ export class ResultScene extends Phaser.Scene {
       const position = addRankingEntry(this.rankingCategory, {
         name: this.rankingName,
         timeSeconds: this.clearTimeSeconds,
+        seed: this.seed,
+        replay: this.replay,
       });
       this.rankingSubmitted = true;
       this.rankingMessageText?.setText(
@@ -167,6 +183,7 @@ export class ResultScene extends Phaser.Scene {
           ? '順位が更新されたため登録対象外になりました'
           : `${position}位に登録しました`,
       );
+      this.returnToTitle();
       return;
     }
 
@@ -174,5 +191,9 @@ export class ResultScene extends Phaser.Scene {
     if (nextState === GameState.Title) {
       this.scene.start('TitleScene');
     }
+  }
+
+  private returnToTitle(): void {
+    this.scene.start('TitleScene');
   }
 }

@@ -1,13 +1,26 @@
-export type RankingCategory = 'RSG' | 'SSG';
+export type RankingCategory = 'RSG' | 'SSG' | 'DEV';
+
+export interface ReplayFrame {
+  timeMs: number;
+  x: number;
+  y: number;
+  angle: number;
+  keyCount: number;
+  openedChestMask: number;
+  enemies: [number, number, number, number];
+}
 
 export interface RankingEntry {
   name: string;
   timeSeconds: number;
+  seed?: number;
+  replay?: ReplayFrame[];
 }
 
 export interface Rankings {
   RSG: RankingEntry[];
   SSG: RankingEntry[];
+  DEV: RankingEntry[];
 }
 
 export const RANKING_STORAGE_KEY = 'escape-room-rankings';
@@ -22,7 +35,36 @@ function isRankingEntry(value: unknown): value is RankingEntry {
     && /^[a-zA-Z0-9]{0,5}$/.test(entry.name)
     && typeof entry.timeSeconds === 'number'
     && Number.isFinite(entry.timeSeconds)
-    && entry.timeSeconds >= 0;
+    && entry.timeSeconds >= 0
+    && (entry.seed === undefined
+      || (Number.isSafeInteger(entry.seed) && (entry.seed as number) >= 0))
+    && (entry.replay === undefined || isReplay(entry.replay));
+}
+
+function isReplay(value: unknown): value is ReplayFrame[] {
+  return Array.isArray(value) && value.length > 0 && value.every((frame: unknown) => {
+    if (typeof frame !== 'object' || frame === null) {
+      return false;
+    }
+    const item = frame as Record<string, unknown>;
+    return typeof item.timeMs === 'number'
+      && Number.isFinite(item.timeMs)
+      && typeof item.x === 'number'
+      && Number.isFinite(item.x)
+      && typeof item.y === 'number'
+      && Number.isFinite(item.y)
+      && typeof item.angle === 'number'
+      && Number.isFinite(item.angle)
+      && typeof item.keyCount === 'number'
+      && Number.isInteger(item.keyCount)
+      && typeof item.openedChestMask === 'number'
+      && Number.isInteger(item.openedChestMask)
+      && Array.isArray(item.enemies)
+      && item.enemies.length === 4
+      && item.enemies.every((coordinate: unknown) => (
+        typeof coordinate === 'number' && Number.isFinite(coordinate)
+      ));
+  });
 }
 
 function readCategory(value: unknown, category: RankingCategory): RankingEntry[] {
@@ -37,7 +79,7 @@ function readCategory(value: unknown, category: RankingCategory): RankingEntry[]
 export function getRankings(): Rankings {
   const stored = localStorage.getItem(RANKING_STORAGE_KEY);
   if (stored === null) {
-    return { RSG: [], SSG: [] };
+    return { RSG: [], SSG: [], DEV: [] };
   }
 
   let parsed: unknown;
@@ -54,6 +96,7 @@ export function getRankings(): Rankings {
   return {
     RSG: readCategory(rankings.RSG, 'RSG'),
     SSG: readCategory(rankings.SSG, 'SSG'),
+    DEV: rankings.DEV === undefined ? [] : readCategory(rankings.DEV, 'DEV'),
   };
 }
 

@@ -7,15 +7,18 @@ export interface ChestData {
   isOpened: boolean;
 }
 
-export function createInitialChests(walkableCells: readonly MazeCellCenter[]): ChestData[] {
+export function createInitialChests(
+  walkableCells: readonly MazeCellCenter[],
+  random: () => number = Math.random,
+): ChestData[] {
   const positions = [...walkableCells]
     .filter((cell) => cell.row !== 1 || cell.column !== 1)
-    .sort(() => Math.random() - 0.5)
+    .sort(() => random() - 0.5)
     .slice(0, 10);
   const correctChestIndices = new Set<number>();
 
   while (correctChestIndices.size < 3) {
-    correctChestIndices.add(Math.floor(Math.random() * positions.length));
+    correctChestIndices.add(Math.floor(random() * positions.length));
   }
 
   return positions.map((position, index) => {

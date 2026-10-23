@@ -1,6 +1,6 @@
 export type GameMode = 'limited' | 'elapsed';
 
-let selectedMode: GameMode = 'limited';
+let selectedMode: GameMode = 'elapsed';
 
 export function getGameMode(): GameMode {
   return selectedMode;

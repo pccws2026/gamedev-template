@@ -5,28 +5,34 @@ import {
   seedFromInput,
 } from '../game/Maze';
 import { applySystemCommand, getGameSettings } from '../game/GameSettings';
-import { getGameMode, setGameMode, type GameMode } from '../game/GameMode';
-
-const GAME_MODES: readonly GameMode[] = ['limited', 'elapsed'];
+import { getGameMode, setGameMode } from '../game/GameMode';
 
 export class TitleScene extends Phaser.Scene {
   private seedInput = '';
   private seedInputText!: Phaser.GameObjects.Text;
-  private modeButtons: Partial<Record<GameMode, Phaser.GameObjects.Text>> = {};
+  private modeButton?: Phaser.GameObjects.Text;
+  private seedFixedButton?: Phaser.GameObjects.Text;
   private modeDescriptionText?: Phaser.GameObjects.Text;
   private lastSeed = '';
   private seedInputFocused = false;
+  private seedFixed = false;
+
+  init(data?: { seed?: number }): void {
+    this.seedInput = data?.seed === undefined ? '' : String(data.seed);
+  }
 
   constructor() {
     super('TitleScene');
   }
 
   create(): void {
-    this.seedInput = '';
     this.seedInputFocused = false;
-    this.modeButtons = {};
     const previousSeed = localStorage.getItem(LAST_SEED_STORAGE_KEY);
     this.lastSeed = previousSeed && /^\d+$/.test(previousSeed) ? previousSeed : '';
+    if (this.seedFixed && this.seedInput === '') {
+      this.seedInput = this.lastSeed || String(createRandomSeed());
+      this.lastSeed = this.seedInput;
+    }
     this.cameras.main.setBackgroundColor('#101722');
 
     const background = this.add.graphics();
@@ -36,14 +42,13 @@ export class TitleScene extends Phaser.Scene {
     background.fillRect(0, 0, 1280, 96);
     background.fillRect(0, 624, 1280, 96);
 
-    this.add.text(360, 48, 'ゲームモード', {
+    this.add.text(294, 48, 'ゲームモード', {
       fontFamily: 'sans-serif',
       fontSize: '18px',
       color: '#b7c9d8',
     }).setOrigin(0.5);
-    for (const mode of GAME_MODES) {
-      this.createModeButton(mode);
-    }
+    this.createModeButton();
+    this.createSeedFixedButton();
 
     this.drawMazeDecoration();
 
@@ -114,6 +119,7 @@ export class TitleScene extends Phaser.Scene {
       fontSize: '18px',
       color: '#f5d58a',
     }).setOrigin(0.5);
+    this.updateSeedInputText();
     this.add.zone(640, 493, 260, 34)
       .setInteractive({ useHandCursor: true })
       .on('pointerdown', () => {
@@ -141,7 +147,7 @@ export class TitleScene extends Phaser.Scene {
       color: '#b7c9d8',
     }).setOrigin(0.5);
 
-    this.add.text(640, 574, '同じ方向の同時押しでダッシュ（エネルギー制）　／　鍵以外の宝箱：100P', {
+    this.add.text(640, 574, '同じ方向の同時押し / Shiftでダッシュ（エネルギー制）　／　鍵以外の宝箱：100P', {
       fontFamily: 'sans-serif',
       fontSize: '15px',
       color: '#b7c9d8',
@@ -169,29 +175,56 @@ export class TitleScene extends Phaser.Scene {
     this.input.keyboard?.on('keydown-ENTER', this.startGame, this);
   }
 
-  private createModeButton(mode: GameMode): void {
-    const label = mode === 'limited' ? '制限モード' : '経過モード';
-    const button = this.add.text(mode === 'limited' ? 520 : 700, 48, label, {
+  private createModeButton(): void {
+    const button = this.add.text(474, 48, '', {
       fontFamily: 'sans-serif',
       fontSize: '18px',
-      color: getGameMode() === mode ? '#58c4b8' : '#b7c9d8',
+      color: '#58c4b8',
       backgroundColor: '#26384a',
       padding: { x: 14, y: 7 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
     button.on('pointerdown', () => {
-      setGameMode(mode);
+      setGameMode(getGameMode() === 'limited' ? 'elapsed' : 'limited');
       this.refreshModeButtons();
     });
-    this.modeButtons[mode] = button;
+    this.modeButton = button;
+    this.refreshModeButtons();
   }
 
   private refreshModeButtons(): void {
-    for (const mode of GAME_MODES) {
-      this.modeButtons[mode]?.setColor(
-        getGameMode() === mode ? '#58c4b8' : '#b7c9d8',
-      );
-    }
+    this.modeButton?.setText(
+      getGameMode() === 'limited' ? '制限モード' : '経過モード',
+    );
     this.updateModeDescription();
+  }
+
+  private createSeedFixedButton(): void {
+    this.seedFixedButton = this.add.text(700, 48, '', {
+      fontFamily: 'sans-serif',
+      fontSize: '18px',
+      color: '#b7c9d8',
+      backgroundColor: '#26384a',
+      padding: { x: 14, y: 7 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    this.seedFixedButton.on('pointerdown', () => {
+      this.seedFixed = !this.seedFixed;
+      if (this.seedFixed) {
+        this.seedInput = this.lastSeed || String(createRandomSeed());
+        this.lastSeed = this.seedInput;
+      } else {
+        this.seedInput = '';
+      }
+      this.updateSeedInputText();
+      this.updateSeedFixedButton();
+    });
+    this.updateSeedFixedButton();
+  }
+
+  private updateSeedFixedButton(): void {
+    this.seedFixedButton?.setText(
+      this.seedFixed ? 'シード固定：ON' : 'シード固定：OFF',
+    );
+    this.seedFixedButton?.setColor(this.seedFixed ? '#58c4b8' : '#b7c9d8');
   }
 
   private updateModeDescription(): void {
@@ -199,8 +232,11 @@ export class TitleScene extends Phaser.Scene {
     const modeDescription = getGameMode() === 'limited'
       ? `制限時間：${settings.roundTimeSeconds}秒`
       : `経過時間：${settings.elapsedTimeStartSeconds}秒から`;
+    const systemMode = settings.developerMode ? '開発者モード' : '通常モード';
+    const healthDescription = settings.developerMode ? 'HP・EGなし' : 'HP：10';
+    const developerDescription = settings.developerMode ? '鍵宝箱は接触で取得' : '';
     this.modeDescriptionText?.setText(
-      `HP：10　／　${modeDescription}　／　鍵を3つ集めて扉から脱出`,
+      `${systemMode}　／　${healthDescription}${developerDescription ? `　／　${developerDescription}` : ''}　／　${modeDescription}　／　鍵を3つ集めて扉から脱出`,
     );
   }
 
@@ -256,15 +292,23 @@ export class TitleScene extends Phaser.Scene {
 
   private startGame(): void {
     const commandResult = applySystemCommand(this.seedInput);
+    if (commandResult === 'show-developer-ranking') {
+      this.scene.start('RankingScene', { developer: true });
+      return;
+    }
     if (commandResult !== 'not-command') {
-      this.seedInput = '';
-      this.seedInputText.setText(
-        commandResult === 'applied'
-          ? '設定を適用しました'
-          : commandResult === 'ignored'
-            ? '敵にエネルギーはありません'
-            : 'コマンドを確認してください',
-      );
+      this.seedInput = this.seedFixed ? this.lastSeed : '';
+      if (this.seedFixed) {
+        this.updateSeedInputText();
+      } else {
+        this.seedInputText.setText(
+          commandResult === 'applied'
+            ? '設定を適用しました'
+            : commandResult === 'ignored'
+              ? '敵にエネルギーはありません'
+              : 'コマンドを確認してください',
+        );
+      }
       if (commandResult === 'applied') {
         this.updateModeDescription();
       }
@@ -276,7 +320,7 @@ export class TitleScene extends Phaser.Scene {
       : seedFromInput(this.seedInput);
     this.scene.start('GameScene', {
       seed,
-      seedWasSet: this.seedInput.trim() !== '',
+      seedWasSet: this.seedFixed || this.seedInput.trim() !== '',
       mode: getGameMode(),
     });
   }

@@ -1,36 +1,51 @@
 export interface GameSettings {
   playerSpeed: number;
   playerAttack: number;
+  playerAttackRange: number;
   playerHp: number;
   playerEnergy: number;
   enemySpeed: number;
   enemyAttack: number;
+  enemyAttackRange: number;
   enemyHp: number;
+  gameSpeed: number;
+  developerMode: boolean;
   roundTimeSeconds: number;
   elapsedTimeStartSeconds: number;
   timerEnabled: boolean;
 }
 
-export type SystemCommandResult = 'applied' | 'ignored' | 'invalid' | 'not-command';
+export type SystemCommandResult =
+  | 'applied'
+  | 'ignored'
+  | 'invalid'
+  | 'not-command'
+  | 'show-developer-ranking';
 type MultiplierSetting = keyof Pick<
   GameSettings,
   | 'playerSpeed'
   | 'playerAttack'
+  | 'playerAttackRange'
   | 'playerHp'
   | 'playerEnergy'
   | 'enemySpeed'
   | 'enemyAttack'
+  | 'enemyAttackRange'
   | 'enemyHp'
 >;
 
 const DEFAULT_SETTINGS: GameSettings = {
   playerSpeed: 1,
   playerAttack: 1,
+  playerAttackRange: 1,
   playerHp: 1,
   playerEnergy: 1,
   enemySpeed: 1,
   enemyAttack: 1,
+  enemyAttackRange: 1,
   enemyHp: 1,
+  gameSpeed: 1,
+  developerMode: false,
   roundTimeSeconds: 60,
   elapsedTimeStartSeconds: 0,
   timerEnabled: true,
@@ -53,14 +68,71 @@ export function areGameSettingsDefault(
 
 export function applySystemCommand(input: string): SystemCommandResult {
   const tokens = input.trim().toLowerCase().split(/\s+/);
+  if (tokens[0] === 'gamemode' || tokens[0] === 'gmd') {
+    if (tokens.length !== 2) {
+      return 'invalid';
+    }
+    if (tokens[1] === 'developer' || tokens[1] === 'dev') {
+      settings.developerMode = true;
+      settingsModifiedByCommand = true;
+      return 'applied';
+    }
+    if (tokens[1] === 'default' || tokens[1] === 'def') {
+      settings.developerMode = false;
+      settingsModifiedByCommand = true;
+      return 'applied';
+    }
+    return 'invalid';
+  }
+
   if (tokens[0] !== 'system' && tokens[0] !== 'sys') {
     return 'not-command';
+  }
+
+  if (
+    tokens.length === 3
+    && (tokens[1] === 'developer' || tokens[1] === 'dev')
+    && (tokens[2] === 'ranking' || tokens[2] === 'ran')
+  ) {
+    return 'show-developer-ranking';
   }
 
   if (tokens.length === 2 && (tokens[1] === 'default' || tokens[1] === 'def')) {
     settings = { ...DEFAULT_SETTINGS };
     settingsModifiedByCommand = false;
     return 'applied';
+  }
+
+  if (tokens.length === 3 && (tokens[1] === 'speed' || tokens[1] === 'sp')) {
+    const speed = Number(tokens[2]);
+    if (!Number.isFinite(speed) || speed <= 0) {
+      return 'invalid';
+    }
+    settings.gameSpeed = speed;
+    settingsModifiedByCommand = true;
+    return 'applied';
+  }
+
+  if (
+    tokens.length === 5
+    && (tokens[2] === 'attack' || tokens[2] === 'at')
+    && (tokens[3] === 'range' || tokens[3] === 'rg')
+  ) {
+    const range = Number(tokens[4]);
+    if (!Number.isFinite(range) || range <= 0) {
+      return 'invalid';
+    }
+    if (tokens[1] === 'player' || tokens[1] === 'pyr') {
+      settings.playerAttackRange = range;
+      settingsModifiedByCommand = true;
+      return 'applied';
+    }
+    if (tokens[1] === 'enemy' || tokens[1] === 'emy') {
+      settings.enemyAttackRange = range;
+      settingsModifiedByCommand = true;
+      return 'applied';
+    }
+    return 'invalid';
   }
 
   if (tokens[1] === 'time' && tokens.length === 3) {

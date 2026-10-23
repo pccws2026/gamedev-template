@@ -58,6 +58,10 @@ function createRandom(seed: number): () => number {
   };
 }
 
+export function createSeededRandom(seed: number): () => number {
+  return createRandom(seed);
+}
+
 function shuffle<T>(items: T[], random: () => number): T[] {
   for (let index = items.length - 1; index > 0; index -= 1) {
     const swapIndex = Math.floor(random() * (index + 1));
