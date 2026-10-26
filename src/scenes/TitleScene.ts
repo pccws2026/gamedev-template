@@ -4,7 +4,11 @@ import {
   LAST_SEED_STORAGE_KEY,
   seedFromInput,
 } from '../game/Maze';
-import { applySystemCommand, getGameSettings } from '../game/GameSettings';
+import {
+  applySystemCommand,
+  getGameSettings,
+  parseRankingDeletionCommand,
+} from '../game/GameSettings';
 import { getGameMode, setGameMode } from '../game/GameMode';
 
 export class TitleScene extends Phaser.Scene {
@@ -16,9 +20,13 @@ export class TitleScene extends Phaser.Scene {
   private lastSeed = '';
   private seedInputFocused = false;
   private seedFixed = false;
+  private rankingSeedPending = false;
 
-  init(data?: { seed?: number }): void {
-    this.seedInput = data?.seed === undefined ? '' : String(data.seed);
+  init(data?: { seed?: number; clearSeed?: boolean }): void {
+    this.seedInput = data?.clearSeed
+      ? ''
+      : data?.seed === undefined ? '' : String(data.seed);
+    this.rankingSeedPending = !data?.clearSeed && data?.seed !== undefined;
   }
 
   constructor() {
@@ -81,7 +89,7 @@ export class TitleScene extends Phaser.Scene {
     keyIcon.lineBetween(660, 330, 660, 344);
     keyIcon.lineBetween(672, 330, 672, 340);
 
-    this.add.text(640, 380, '迷路の中に鍵が3つ隠されています', {
+    this.add.text(640, 380, '宝箱から鍵を3つ集めて扉から脱出', {
       fontFamily: 'sans-serif',
       fontSize: '24px',
       color: '#f5d58a',
@@ -141,13 +149,13 @@ export class TitleScene extends Phaser.Scene {
       });
     }
 
-    this.add.text(640, 550, '移動：WASD / 矢印　宝箱：Enter　攻撃：Space　Esc：ポーズ', {
+    this.add.text(640, 550, '移動：WASD / 矢印　宝箱/攻撃：Space　ポーズ：Esc', {
       fontFamily: 'sans-serif',
       fontSize: '15px',
       color: '#b7c9d8',
     }).setOrigin(0.5);
 
-    this.add.text(640, 574, '同じ方向の同時押し / Shiftでダッシュ（エネルギー制）　／　鍵以外の宝箱：100P', {
+    this.add.text(640, 574, 'ダッシュ：Shift', {
       fontFamily: 'sans-serif',
       fontSize: '15px',
       color: '#b7c9d8',
@@ -167,7 +175,7 @@ export class TitleScene extends Phaser.Scene {
       backgroundColor: '#26384a',
       padding: { x: 18, y: 8 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-    rankingButton.on('pointerdown', () => this.scene.start('RankingScene'));
+    rankingButton.on('pointerdown', () => this.scene.start('RankingScene', { developer: false }));
     rankingButton.on('pointerover', () => rankingButton.setColor('#f5f1e8'));
     rankingButton.on('pointerout', () => rankingButton.setColor('#f5d58a'));
 
@@ -232,11 +240,10 @@ export class TitleScene extends Phaser.Scene {
     const modeDescription = getGameMode() === 'limited'
       ? `制限時間：${settings.roundTimeSeconds}秒`
       : `経過時間：${settings.elapsedTimeStartSeconds}秒から`;
-    const systemMode = settings.developerMode ? '開発者モード' : '通常モード';
     const healthDescription = settings.developerMode ? 'HP・EGなし' : 'HP：10';
     const developerDescription = settings.developerMode ? '鍵宝箱は接触で取得' : '';
     this.modeDescriptionText?.setText(
-      `${systemMode}　／　${healthDescription}${developerDescription ? `　／　${developerDescription}` : ''}　／　${modeDescription}　／　鍵を3つ集めて扉から脱出`,
+      `${healthDescription}${developerDescription ? `　／　${developerDescription}` : ''}　／　${modeDescription}`,
     );
   }
 
@@ -296,6 +303,24 @@ export class TitleScene extends Phaser.Scene {
       this.scene.start('RankingScene', { developer: true });
       return;
     }
+    if (commandResult === 'show-death-ranking') {
+      this.scene.start('RankingScene', { death: true });
+      return;
+    }
+    if (commandResult === 'show-command-list') {
+      this.scene.start('CommandListScene');
+      return;
+    }
+    if (commandResult === 'show-ranking-delete-confirmation') {
+      const request = parseRankingDeletionCommand(this.seedInput);
+      if (request) {
+        this.scene.start('RankingDeleteScene', {
+          ...request,
+          returnScene: 'TitleScene',
+        });
+      }
+      return;
+    }
     if (commandResult !== 'not-command') {
       this.seedInput = this.seedFixed ? this.lastSeed : '';
       if (this.seedFixed) {
@@ -318,6 +343,10 @@ export class TitleScene extends Phaser.Scene {
     const seed = this.seedInput.trim() === ''
       ? createRandomSeed()
       : seedFromInput(this.seedInput);
+    if (this.rankingSeedPending && !this.seedFixed) {
+      this.seedInput = '';
+    }
+    this.rankingSeedPending = false;
     this.scene.start('GameScene', {
       seed,
       seedWasSet: this.seedFixed || this.seedInput.trim() !== '',

@@ -19,6 +19,9 @@ interface ResultData {
   seedWasSet: boolean;
   seed: number;
   replay: ReplayFrame[];
+  chestPositions: { x: number; y: number }[];
+  correctChestMask: number;
+  deathTimeSeconds: number;
   rankingEligible: boolean;
   developerRankingEligible: boolean;
   reason?: 'timeout' | 'defeated' | 'clear';
@@ -35,11 +38,15 @@ export class ResultScene extends Phaser.Scene {
   private seedWasSet = false;
   private seed = 0;
   private replay: ReplayFrame[] = [];
+  private chestPositions: { x: number; y: number }[] = [];
+  private correctChestMask = 0;
+  private deathTimeSeconds = 0;
   private rankingEligible = false;
   private developerRankingEligible = false;
   private reason: ResultData['reason'] = 'timeout';
   private rankingCategory?: RankingCategory;
   private rankingName = '';
+  private rankingTimeSeconds = 0;
   private rankingNameText?: Phaser.GameObjects.Text;
   private rankingMessageText?: Phaser.GameObjects.Text;
   private rankingSubmitted = false;
@@ -59,11 +66,15 @@ export class ResultScene extends Phaser.Scene {
     this.seedWasSet = data.seedWasSet;
     this.seed = data.seed;
     this.replay = data.replay;
+    this.chestPositions = data.chestPositions;
+    this.correctChestMask = data.correctChestMask;
+    this.deathTimeSeconds = data.deathTimeSeconds;
     this.rankingEligible = data.rankingEligible;
     this.developerRankingEligible = data.developerRankingEligible;
     this.reason = data.reason ?? 'timeout';
     this.rankingCategory = undefined;
     this.rankingName = '';
+    this.rankingTimeSeconds = 0;
     this.rankingSubmitted = false;
   }
 
@@ -82,9 +93,9 @@ export class ResultScene extends Phaser.Scene {
     background.fillStyle(0x172333, 1);
     background.fillRect(0, 0, 1280, 720);
     background.fillStyle(0x26384a, 1);
-    background.fillRoundedRect(320, 120, 640, 480, 16);
+    background.fillRoundedRect(320, 120, 640, 540, 16);
     background.lineStyle(4, accentColor, 1);
-    background.strokeRoundedRect(320, 120, 640, 480, 16);
+    background.strokeRoundedRect(320, 120, 640, 540, 16);
     background.fillStyle(accentColor, 1);
     background.fillRect(320, 120, 640, 12);
 
@@ -100,18 +111,26 @@ export class ResultScene extends Phaser.Scene {
       align: 'center',
     }).setOrigin(0.5);
 
-    if (isClear && (this.rankingEligible || this.developerRankingEligible)) {
-      const category: RankingCategory = this.rankingEligible
-        ? this.seedWasSet ? 'SSG' : 'RSG'
-        : 'DEV';
-      const position = getRankingPosition(category, this.clearTimeSeconds);
+    if (this.rankingEligible || (isClear && this.developerRankingEligible)) {
+      const category: RankingCategory = !isClear
+        ? 'DTH'
+        : this.rankingEligible
+          ? this.seedWasSet ? 'SSG' : 'RSG'
+          : 'DEV';
+      this.rankingTimeSeconds = isClear ? this.clearTimeSeconds : this.deathTimeSeconds;
+      const position = getRankingPosition(category, this.rankingTimeSeconds);
       if (position !== null) {
         this.rankingCategory = category;
-        const categoryLabel = category === 'DEV' ? '開発' : category;
+        const categoryLabel = category === 'DEV'
+          ? '開発'
+          : category === 'DTH' ? 'デス' : category;
+        const categoryColor = category === 'DTH'
+          ? '#e05252'
+          : category === 'SSG' ? '#f5d58a' : '#58c4b8';
         this.add.text(640, 390, `${categoryLabel}ランキング ${position}位`, {
           fontFamily: 'sans-serif',
           fontSize: '26px',
-          color: '#f5d58a',
+          color: categoryColor,
         }).setOrigin(0.5);
         this.add.text(640, 438, '名前（英数字 0〜5文字）', {
           fontFamily: 'sans-serif',
@@ -126,10 +145,10 @@ export class ResultScene extends Phaser.Scene {
         this.rankingMessageText = this.add.text(640, 530, 'Enterキーでランキングに登録', {
           fontFamily: 'sans-serif',
           fontSize: '18px',
-          color: '#58c4b8',
+          color: categoryColor,
         }).setOrigin(0.5);
       }
-    } else if (isClear) {
+    } else {
       this.add.text(640, 430, 'ランキング登録対象外です', {
         fontFamily: 'sans-serif',
         fontSize: '18px',
@@ -142,6 +161,17 @@ export class ResultScene extends Phaser.Scene {
       fontSize: '20px',
       color: '#b7c9d8',
     }).setOrigin(0.5);
+
+    const replayButton = this.add.text(640, 620, '今回のプレイを再生', {
+      fontFamily: 'sans-serif',
+      fontSize: '20px',
+      color: '#f5f1e8',
+      backgroundColor: '#26384a',
+      padding: { x: 18, y: 8 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    replayButton.on('pointerdown', this.openReplay, this);
+    replayButton.on('pointerover', () => replayButton.setColor('#58c4b8'));
+    replayButton.on('pointerout', () => replayButton.setColor('#f5f1e8'));
 
     this.input.keyboard?.on('keydown', this.handleNameInput, this);
     this.input.keyboard?.on('keydown-ENTER', this.handleEnter, this);
@@ -173,9 +203,11 @@ export class ResultScene extends Phaser.Scene {
     if (this.rankingCategory && !this.rankingSubmitted) {
       const position = addRankingEntry(this.rankingCategory, {
         name: this.rankingName,
-        timeSeconds: this.clearTimeSeconds,
+        timeSeconds: this.rankingTimeSeconds,
         seed: this.seed,
         replay: this.replay,
+        chestPositions: this.chestPositions,
+        correctChestMask: this.correctChestMask,
       });
       this.rankingSubmitted = true;
       this.rankingMessageText?.setText(
@@ -189,11 +221,27 @@ export class ResultScene extends Phaser.Scene {
 
     const nextState = transitionGameState(this.state, GameEvent.EnterPressed);
     if (nextState === GameState.Title) {
-      this.scene.start('TitleScene');
+      this.returnToTitle();
     }
   }
 
   private returnToTitle(): void {
-    this.scene.start('TitleScene');
+    this.scene.start('TitleScene', { clearSeed: true });
+  }
+
+  private openReplay(): void {
+    this.scene.pause();
+    this.scene.launch('ReplayScene', {
+      title: '今回のプレイ',
+      returnScene: 'ResultScene',
+      entry: {
+        name: '',
+        timeSeconds: this.clearTimeSeconds,
+        seed: this.seed,
+        replay: this.replay,
+        chestPositions: this.chestPositions,
+        correctChestMask: this.correctChestMask,
+      },
+    });
   }
 }

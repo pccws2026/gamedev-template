@@ -1,4 +1,4 @@
-export type RankingCategory = 'RSG' | 'SSG' | 'DEV';
+export type RankingCategory = 'RSG' | 'SSG' | 'DEV' | 'DTH';
 
 export interface ReplayFrame {
   timeMs: number;
@@ -7,7 +7,21 @@ export interface ReplayFrame {
   angle: number;
   keyCount: number;
   openedChestMask: number;
-  enemies: [number, number, number, number];
+  enemies: number[];
+  hp?: number;
+  energy?: number;
+  hpMax?: number;
+  energyMax?: number;
+  tookDamage?: boolean;
+  keyAcquired?: boolean;
+  enemyHp?: number[];
+  enemyHpMax?: number;
+  enemyTookDamage?: boolean[];
+}
+
+export interface ReplayChestPosition {
+  x: number;
+  y: number;
 }
 
 export interface RankingEntry {
@@ -15,12 +29,15 @@ export interface RankingEntry {
   timeSeconds: number;
   seed?: number;
   replay?: ReplayFrame[];
+  chestPositions?: ReplayChestPosition[];
+  correctChestMask?: number;
 }
 
 export interface Rankings {
   RSG: RankingEntry[];
   SSG: RankingEntry[];
   DEV: RankingEntry[];
+  DTH: RankingEntry[];
 }
 
 export const RANKING_STORAGE_KEY = 'escape-room-rankings';
@@ -38,6 +55,19 @@ function isRankingEntry(value: unknown): value is RankingEntry {
     && entry.timeSeconds >= 0
     && (entry.seed === undefined
       || (Number.isSafeInteger(entry.seed) && (entry.seed as number) >= 0))
+    && (entry.chestPositions === undefined
+      || (Array.isArray(entry.chestPositions) && entry.chestPositions.every((position: unknown) => {
+        if (typeof position !== 'object' || position === null) {
+          return false;
+        }
+        const item = position as Record<string, unknown>;
+        return typeof item.x === 'number'
+          && Number.isFinite(item.x)
+          && typeof item.y === 'number'
+          && Number.isFinite(item.y);
+      })))
+    && (entry.correctChestMask === undefined
+      || (Number.isSafeInteger(entry.correctChestMask) && (entry.correctChestMask as number) >= 0))
     && (entry.replay === undefined || isReplay(entry.replay));
 }
 
@@ -60,9 +90,26 @@ function isReplay(value: unknown): value is ReplayFrame[] {
       && typeof item.openedChestMask === 'number'
       && Number.isInteger(item.openedChestMask)
       && Array.isArray(item.enemies)
-      && item.enemies.length === 4
+      && item.enemies.length % 2 === 0
       && item.enemies.every((coordinate: unknown) => (
         typeof coordinate === 'number' && Number.isFinite(coordinate)
+      ))
+      && (item.hp === undefined || (typeof item.hp === 'number' && Number.isFinite(item.hp)))
+      && (item.energy === undefined || (typeof item.energy === 'number' && Number.isFinite(item.energy)))
+      && (item.hpMax === undefined || (typeof item.hpMax === 'number' && Number.isFinite(item.hpMax)))
+      && (item.energyMax === undefined || (typeof item.energyMax === 'number' && Number.isFinite(item.energyMax)))
+      && (item.tookDamage === undefined || typeof item.tookDamage === 'boolean')
+      && (item.keyAcquired === undefined || typeof item.keyAcquired === 'boolean')
+      && (item.enemyHp === undefined || (
+        Array.isArray(item.enemyHp)
+        && item.enemyHp.every((hp: unknown) => typeof hp === 'number' && Number.isFinite(hp))
+      ))
+      && (item.enemyHpMax === undefined || (
+        typeof item.enemyHpMax === 'number' && Number.isFinite(item.enemyHpMax)
+      ))
+      && (item.enemyTookDamage === undefined || (
+        Array.isArray(item.enemyTookDamage)
+        && item.enemyTookDamage.every((hit: unknown) => typeof hit === 'boolean')
       ));
   });
 }
@@ -79,7 +126,7 @@ function readCategory(value: unknown, category: RankingCategory): RankingEntry[]
 export function getRankings(): Rankings {
   const stored = localStorage.getItem(RANKING_STORAGE_KEY);
   if (stored === null) {
-    return { RSG: [], SSG: [], DEV: [] };
+    return { RSG: [], SSG: [], DEV: [], DTH: [] };
   }
 
   let parsed: unknown;
@@ -97,6 +144,7 @@ export function getRankings(): Rankings {
     RSG: readCategory(rankings.RSG, 'RSG'),
     SSG: readCategory(rankings.SSG, 'SSG'),
     DEV: rankings.DEV === undefined ? [] : readCategory(rankings.DEV, 'DEV'),
+    DTH: rankings.DTH === undefined ? [] : readCategory(rankings.DTH, 'DTH'),
   };
 }
 
@@ -130,4 +178,21 @@ export function addRankingEntry(
   rankings[category] = entries.slice(0, RANKING_LIMIT);
   localStorage.setItem(RANKING_STORAGE_KEY, JSON.stringify(rankings));
   return insertionIndex + 1;
+}
+
+export function removeRankingEntry(
+  category: RankingCategory,
+  position: number,
+): boolean {
+  if (!Number.isSafeInteger(position) || position < 1 || position > RANKING_LIMIT) {
+    return false;
+  }
+  const rankings = getRankings();
+  const entries = rankings[category];
+  if (position > entries.length) {
+    return false;
+  }
+  entries.splice(position - 1, 1);
+  localStorage.setItem(RANKING_STORAGE_KEY, JSON.stringify(rankings));
+  return true;
 }

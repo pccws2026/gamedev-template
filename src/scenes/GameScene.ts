@@ -9,7 +9,6 @@ import {
 import { type GameMode } from '../game/GameMode';
 import {
   createMaze,
-  createSeededRandom,
   LAST_SEED_STORAGE_KEY,
   MAZE_CELL_SPACING,
   MAZE_CORRIDOR_WIDTH,
@@ -76,6 +75,8 @@ interface EnemyData {
   angle: number;
   attackCooldown: number;
   hitSlowTime: number;
+  hitFlashTime: number;
+  tookDamageSinceLastFrame: boolean;
   isDead: boolean;
   deathTime: number;
   body: Phaser.GameObjects.Arc;
@@ -148,6 +149,7 @@ export class GameScene extends Phaser.Scene {
   private chestGraphics!: Phaser.GameObjects.Graphics;
   private hpBarGraphics!: Phaser.GameObjects.Graphics;
   private energyBarGraphics!: Phaser.GameObjects.Graphics;
+  private energyWarningText!: Phaser.GameObjects.Text;
   private mazeWalls!: Phaser.Geom.Rectangle[];
   private maze!: MazeData;
   private chests!: ChestData[];
@@ -161,6 +163,7 @@ export class GameScene extends Phaser.Scene {
   private cellByKey = new Map<string, MazeCellCenter>();
   private passages = new Set<string>();
   private pauseOverlay!: Phaser.GameObjects.Container;
+  private startPrompt!: Phaser.GameObjects.Text;
   private keyCountText!: Phaser.GameObjects.Text;
   private pCountText!: Phaser.GameObjects.Text;
   private timeText!: Phaser.GameObjects.Text;
@@ -178,6 +181,7 @@ export class GameScene extends Phaser.Scene {
   private replayTimeMs = 0;
   private lastReplaySampleMs = 0;
   private energy = 1;
+  private energyWarningTime = 0;
   private hp = PLAYER_MAX_HP;
   private timeWithoutBoost = 0;
   private energyWasExhausted = false;
@@ -187,6 +191,8 @@ export class GameScene extends Phaser.Scene {
   private attackEnergyCostPending = false;
   private attackHandIndex = 1;
   private hitFlashTime = 0;
+  private tookDamageSinceLastFrame = false;
+  private keyAcquiredSinceLastFrame = false;
   private playerWorldX = 0;
   private playerWorldY = 0;
   private playerScreenX = 0;
@@ -195,6 +201,7 @@ export class GameScene extends Phaser.Scene {
   private seenExitDoor = false;
   private visibleExitDoor = false;
   private isPaused = false;
+  private hasStarted = false;
   private isEnding = false;
   private state = GameState.Playing;
 
@@ -207,7 +214,7 @@ export class GameScene extends Phaser.Scene {
     this.mode = data.mode;
     this.seedWasSet = data.seedWasSet;
     this.seed = data.seed;
-    this.random = createSeededRandom(data.seed ^ 0x5f3759df);
+    this.random = () => Math.random();
     this.replayFrames = [];
     this.replayTimeMs = 0;
     this.lastReplaySampleMs = 0;
@@ -216,6 +223,7 @@ export class GameScene extends Phaser.Scene {
     this.remainingTime = this.settings.roundTimeSeconds;
     this.elapsedTime = this.settings.elapsedTimeStartSeconds;
     this.energy = this.settings.playerEnergy;
+    this.energyWarningTime = 0;
     this.hp = PLAYER_MAX_HP * this.settings.playerHp;
     this.timeWithoutBoost = 0;
     this.energyWasExhausted = false;
@@ -225,6 +233,8 @@ export class GameScene extends Phaser.Scene {
     this.attackEnergyCostPending = false;
     this.attackHandIndex = 1;
     this.hitFlashTime = 0;
+    this.tookDamageSinceLastFrame = false;
+    this.keyAcquiredSinceLastFrame = false;
     this.playerWorldX = 0;
     this.playerWorldY = 0;
     this.playerScreenX = 0;
@@ -233,6 +243,7 @@ export class GameScene extends Phaser.Scene {
     this.seenExitDoor = false;
     this.visibleExitDoor = false;
     this.isPaused = false;
+    this.hasStarted = false;
     this.isEnding = false;
     this.state = GameState.Playing;
     this.enemies = [];
@@ -378,6 +389,13 @@ export class GameScene extends Phaser.Scene {
     ).setDepth(7);
     this.player.setStrokeStyle(3, 0xd8fff4);
     this.playerHands = this.add.graphics().setDepth(8);
+    this.energyWarningText = this.add.text(0, 0, 'EG切れ', {
+      fontFamily: 'sans-serif',
+      fontSize: '18px',
+      color: '#f5d58a',
+      stroke: '#101722',
+      strokeThickness: 5,
+    }).setOrigin(0.5, 1).setDepth(30).setVisible(false);
 
     for (const cell of this.maze.walkableCells) {
       this.cellByKey.set(cellKey(cell), cell);
@@ -396,8 +414,22 @@ export class GameScene extends Phaser.Scene {
     roomFrame.strokeRect(ROOM_X, ROOM_Y, ROOM_WIDTH, ROOM_HEIGHT);
     this.updateWorldPosition(playerScreenX, playerScreenY);
     this.refreshVision();
+    for (const enemy of this.enemies) {
+      this.updateEnemyVisuals(enemy);
+    }
     this.redrawChests();
     this.recordReplayFrame();
+
+    const startPrompt = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT / 2, 'キー入力またはクリックで開始', {
+      fontFamily: 'sans-serif',
+      fontSize: '28px',
+      color: '#f5f1e8',
+      backgroundColor: '#101722',
+      padding: { x: 18, y: 12 },
+    }).setOrigin(0.5).setDepth(40).setAlpha(0.5);
+    this.input.keyboard?.on('keydown', this.beginGame, this);
+    this.input.on('pointerdown', this.beginGame, this);
+    this.startPrompt = startPrompt;
 
     this.interactionText = this.add.text(384, 43, '', {
       fontFamily: 'sans-serif',
@@ -443,6 +475,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
+    if (!this.hasStarted) {
+      return;
+    }
     const gameDelta = delta * this.settings.gameSpeed;
     if (Phaser.Input.Keyboard.JustDown(this.escapeKey)) {
       this.togglePause();
@@ -476,7 +511,12 @@ export class GameScene extends Phaser.Scene {
       this.mode === 'limited' && displayedTime <= 10 ? '#e8876b' : '#f5f1e8',
     );
     this.hitFlashTime = Math.max(0, this.hitFlashTime - gameDelta);
-    this.damageOverlay.setAlpha(0.28 * (this.hitFlashTime / 260));
+    this.damageOverlay.setAlpha(0.48 * (this.hitFlashTime / 200));
+    if (this.hitFlashTime > 0) {
+      this.player.setFillStyle(0xff3b3b).setStrokeStyle(5, 0xfff1e8);
+    } else {
+      this.player.setFillStyle(0x58c4b8).setStrokeStyle(3, 0xd8fff4);
+    }
     if (this.mode === 'limited' && this.remainingTime === 0) {
       this.finishGame('timeout');
       return;
@@ -538,6 +578,7 @@ export class GameScene extends Phaser.Scene {
         this.attack();
       }
     }
+    this.updateEnergyWarning(gameDelta);
   }
 
   private updatePlayer(delta: number): void {
@@ -621,6 +662,9 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    if (boostRequested && this.energy <= 0) {
+      this.showEnergyWarning();
+    }
     if (boostRequested && this.energy > 0) {
       this.timeWithoutBoost = 0;
       const energyRequired = energyDelta / BOOST_DRAIN_DURATION_MS;
@@ -652,10 +696,22 @@ export class GameScene extends Phaser.Scene {
     return 0;
   }
 
+  private showEnergyWarning(): void {
+    this.energyWarningTime = 1000;
+  }
+
+  private updateEnergyWarning(delta: number): void {
+    this.energyWarningTime = Math.max(0, this.energyWarningTime - delta);
+    this.energyWarningText
+      .setPosition(this.player.x, this.player.y - PLAYER_RADIUS - 8)
+      .setVisible(this.energyWarningTime > 0);
+  }
+
   private drawStatusBars(): void {
+    const playerMaxHp = PLAYER_MAX_HP * this.settings.playerHp;
     this.drawBar(
       this.hpBarGraphics,
-      this.hp / (PLAYER_MAX_HP * this.settings.playerHp),
+      playerMaxHp > 0 ? this.hp / playerMaxHp : 0,
       0xe8876b,
       24,
       12,
@@ -663,7 +719,7 @@ export class GameScene extends Phaser.Scene {
     );
     this.drawBar(
       this.energyBarGraphics,
-      this.energy / this.settings.playerEnergy,
+      this.settings.playerEnergy > 0 ? this.energy / this.settings.playerEnergy : 0,
       0x58c4b8,
       54,
       12,
@@ -700,6 +756,19 @@ export class GameScene extends Phaser.Scene {
     this.pauseOverlay.setVisible(this.isPaused);
   }
 
+  private beginGame(): void {
+    if (this.hasStarted) {
+      return;
+    }
+    this.hasStarted = true;
+    this.startPrompt.setVisible(false);
+    this.input.keyboard?.off('keydown', this.beginGame, this);
+    this.input.off('pointerdown', this.beginGame, this);
+    if (this.hp <= 0) {
+      this.finishGame('defeated');
+    }
+  }
+
   private returnToTitle(): void {
     this.state = transitionGameState(this.state, GameEvent.ReturnToTitlePressed);
     if (this.state === GameState.Title) {
@@ -729,6 +798,9 @@ export class GameScene extends Phaser.Scene {
       seedWasSet: this.seedWasSet,
       seed: this.seed,
       replay: this.replayFrames,
+      chestPositions: this.chests.map(({ x, y }) => ({ x, y })),
+      correctChestMask: this.getCorrectChestMask(),
+      deathTimeSeconds: this.replayTimeMs / 1000,
       rankingEligible: areGameSettingsDefault(this.settings),
       developerRankingEligible: !areGameSettingsDefault(this.settings),
       reason,
@@ -753,6 +825,9 @@ export class GameScene extends Phaser.Scene {
       seedWasSet: this.seedWasSet,
       seed: this.seed,
       replay: this.replayFrames,
+      chestPositions: this.chests.map(({ x, y }) => ({ x, y })),
+      correctChestMask: this.getCorrectChestMask(),
+      deathTimeSeconds: this.replayTimeMs / 1000,
       rankingEligible: areGameSettingsDefault(this.settings),
       developerRankingEligible: !areGameSettingsDefault(this.settings),
       reason: 'clear',
@@ -765,8 +840,14 @@ export class GameScene extends Phaser.Scene {
       : this.settings.roundTimeSeconds - this.remainingTime;
   }
 
+  private getCorrectChestMask(): number {
+    return this.chests.reduce(
+      (mask, chest, index) => chest.isCorrect ? mask | (1 << index) : mask,
+      0,
+    );
+  }
+
   private recordReplayFrame(): void {
-    const [firstEnemy, secondEnemy] = this.enemies;
     const openedChestMask = this.chests.reduce(
       (mask, chest, index) => chest.isOpened ? mask | (1 << index) : mask,
       0,
@@ -778,13 +859,25 @@ export class GameScene extends Phaser.Scene {
       angle: this.facingAngle,
       keyCount: this.keyCount,
       openedChestMask,
-      enemies: [
-        firstEnemy && !firstEnemy.isDead ? Math.round(firstEnemy.x) : 0,
-        firstEnemy && !firstEnemy.isDead ? Math.round(firstEnemy.y) : 0,
-        secondEnemy && !secondEnemy.isDead ? Math.round(secondEnemy.x) : 0,
-        secondEnemy && !secondEnemy.isDead ? Math.round(secondEnemy.y) : 0,
-      ],
+      hp: this.hp,
+      energy: this.energy,
+      hpMax: PLAYER_MAX_HP * this.settings.playerHp,
+      energyMax: this.settings.playerEnergy,
+      tookDamage: this.tookDamageSinceLastFrame,
+      keyAcquired: this.keyAcquiredSinceLastFrame,
+      enemyHp: this.enemies.map((enemy) => enemy.isDead ? 0 : enemy.hp),
+      enemyHpMax: ENEMY_MAX_HP * this.settings.enemyHp,
+      enemyTookDamage: this.enemies.map((enemy) => enemy.tookDamageSinceLastFrame),
+      enemies: this.enemies.flatMap((enemy) => [
+        Math.round(enemy.x),
+        Math.round(enemy.y),
+      ]),
     });
+    this.tookDamageSinceLastFrame = false;
+    this.keyAcquiredSinceLastFrame = false;
+    for (const enemy of this.enemies) {
+      enemy.tookDamageSinceLastFrame = false;
+    }
     this.lastReplaySampleMs = this.replayTimeMs;
   }
 
@@ -842,8 +935,10 @@ export class GameScene extends Phaser.Scene {
     chest.isOpened = true;
     if (chest.isCorrect) {
       this.keyCount += 1;
+      this.keyAcquiredSinceLastFrame = true;
       this.keyCountText.setText(`鍵: ${this.keyCount} / ${KEY_TARGET}`);
       this.playKeyAcquiredEffect();
+      this.recordReplayFrame();
     } else {
       this.pCount += COIN_REWARD;
       this.pCountText.setText(`P: ${this.pCount}`);
@@ -861,10 +956,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private attack(): void {
-    if (
-      this.attackCooldown > 0
-      || (!this.settings.developerMode && this.energy < PLAYER_ATTACK_COST)
-    ) {
+    if (this.attackCooldown > 0) {
+      return;
+    }
+    if (!this.settings.developerMode && this.energy < PLAYER_ATTACK_COST) {
+      this.showEnergyWarning();
       return;
     }
     this.attackCooldown = PLAYER_ATTACK_COOLDOWN_MS;
@@ -875,6 +971,19 @@ export class GameScene extends Phaser.Scene {
     this.timeWithoutBoost = 0;
     this.attackAnimationTime = PLAYER_ATTACK_ANIMATION_MS;
     this.attackHandIndex = 1 - this.attackHandIndex;
+    let enemyWasHit = false;
+    const handOffset = this.attackHandIndex === 0 ? Math.PI / 4 : -Math.PI / 4;
+    const handAngle = this.facingAngle + handOffset;
+    const shoulderX = this.playerWorldX
+      + Math.cos(handAngle) * PLAYER_RADIUS * 0.45;
+    const shoulderY = this.playerWorldY
+      + Math.sin(handAngle) * PLAYER_RADIUS * 0.45;
+    const handX = this.playerWorldX
+      + Math.cos(handAngle) * (PLAYER_RADIUS - 2)
+      + Math.cos(this.facingAngle) * 24;
+    const handY = this.playerWorldY
+      + Math.sin(handAngle) * (PLAYER_RADIUS - 2)
+      + Math.sin(this.facingAngle) * 24;
 
     for (const enemy of this.enemies) {
       if (enemy.isDead || !this.isVisibleAt(enemy.x, enemy.y)) {
@@ -892,19 +1001,36 @@ export class GameScene extends Phaser.Scene {
         enemy.x,
         enemy.y,
       );
-      if (
+      const bodyHit = (
         distance <= PLAYER_ATTACK_RANGE * this.settings.playerAttackRange + ENEMY_RADIUS
         && Math.abs(angleDifference(targetAngle, this.facingAngle)) <= Math.PI / 4
+      );
+      const armHit = distanceToSegment(
+        enemy.x,
+        enemy.y,
+        shoulderX,
+        shoulderY,
+        handX,
+        handY,
+      ) <= ENEMY_RADIUS + HAND_RADIUS;
+      if (
+        (bodyHit || armHit)
         && this.hasLineOfSight(this.playerWorldX, this.playerWorldY, enemy.x, enemy.y)
       ) {
         enemy.hp = this.settings.developerMode
           ? 0
           : Math.max(0, enemy.hp - PLAYER_ATTACK_DAMAGE * this.settings.playerAttack);
         enemy.hitSlowTime = 200;
+        enemy.hitFlashTime = 120;
+        enemy.tookDamageSinceLastFrame = true;
+        enemyWasHit = true;
         if (enemy.hp === 0) {
           this.beginEnemyDeath(enemy);
         }
       }
+    }
+    if (enemyWasHit) {
+      this.recordReplayFrame();
     }
   }
 
@@ -1004,6 +1130,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private createEnemies(): void {
+    if (this.settings.enemyHp === 0) {
+      return;
+    }
     const possibleCells = this.maze.walkableCells.filter(
       (cell) => Phaser.Math.Distance.Between(
         cell.x,
@@ -1013,7 +1142,11 @@ export class GameScene extends Phaser.Scene {
       ) >= 100 * R,
     );
 
-    for (let index = 0; index < 2 && possibleCells.length > 0; index += 1) {
+    for (
+      let index = 0;
+      index < Math.min(this.settings.enemyCount, possibleCells.length);
+      index += 1
+    ) {
       const cellIndex = Math.floor(this.random() * possibleCells.length);
       const [cell] = possibleCells.splice(cellIndex, 1);
       const body = this.add.circle(0, 0, ENEMY_RADIUS, 0xe05252).setDepth(5);
@@ -1027,6 +1160,8 @@ export class GameScene extends Phaser.Scene {
         angle: this.random() * Math.PI * 2,
         attackCooldown: 0,
         hitSlowTime: 0,
+        hitFlashTime: 0,
+        tookDamageSinceLastFrame: false,
         isDead: false,
         deathTime: 0,
         body,
@@ -1056,6 +1191,7 @@ export class GameScene extends Phaser.Scene {
       const slowedDuration = Math.min(delta, enemy.hitSlowTime);
       const enemyDelta = delta - slowedDuration * 0.5;
       enemy.hitSlowTime -= slowedDuration;
+      enemy.hitFlashTime = Math.max(0, enemy.hitFlashTime - delta);
 
       const distanceToPlayer = Phaser.Math.Distance.Between(
         enemy.x,
@@ -1084,7 +1220,77 @@ export class GameScene extends Phaser.Scene {
       if (isInRange) {
         this.tryEnemyAttack(enemy);
       }
+    }
+    this.resolveEnemyRepulsion();
+    for (const enemy of this.enemies) {
       this.updateEnemyVisuals(enemy);
+    }
+  }
+
+  private resolveEnemyRepulsion(): void {
+    const minimumDistance = ENEMY_RADIUS * 2 + 8;
+    for (let firstIndex = 0; firstIndex < this.enemies.length; firstIndex += 1) {
+      const first = this.enemies[firstIndex];
+      if (first.isDead) {
+        continue;
+      }
+      for (
+        let secondIndex = firstIndex + 1;
+        secondIndex < this.enemies.length;
+        secondIndex += 1
+      ) {
+        const second = this.enemies[secondIndex];
+        if (second.isDead) {
+          continue;
+        }
+        let offsetX = first.x - second.x;
+        let offsetY = first.y - second.y;
+        let distance = Math.hypot(offsetX, offsetY);
+        if (distance >= minimumDistance) {
+          continue;
+        }
+        if (distance === 0) {
+          const angle = (firstIndex + secondIndex + 1) * Math.PI / 4;
+          offsetX = Math.cos(angle);
+          offsetY = Math.sin(angle);
+          distance = 1;
+        }
+        const pushDistance = Math.min(2, (minimumDistance - distance) * 0.25);
+        const pushX = offsetX / distance * pushDistance;
+        const pushY = offsetY / distance * pushDistance;
+        const firstX = first.x + pushX;
+        const firstY = first.y + pushY;
+        this.moveEnemyForRepulsion(first, firstX, firstY, pushX, pushY);
+        const secondX = second.x - pushX;
+        const secondY = second.y - pushY;
+        this.moveEnemyForRepulsion(second, secondX, secondY, -pushX, -pushY);
+      }
+    }
+  }
+
+  private moveEnemyForRepulsion(
+    enemy: EnemyData,
+    targetX: number,
+    targetY: number,
+    pushX: number,
+    pushY: number,
+  ): void {
+    const pushLength = Math.hypot(pushX, pushY);
+    const tangentX = pushLength > 0 ? -pushY / pushLength * 2 : 0;
+    const tangentY = pushLength > 0 ? pushX / pushLength * 2 : 0;
+    const candidates: [number, number][] = [
+      [targetX, targetY],
+      [targetX, enemy.y],
+      [enemy.x, targetY],
+      [enemy.x + tangentX, enemy.y + tangentY],
+      [enemy.x - tangentX, enemy.y - tangentY],
+    ];
+    for (const [x, y] of candidates) {
+      if (this.canEnemyOccupy(enemy, x, y)) {
+        enemy.x = x;
+        enemy.y = y;
+        return;
+      }
     }
   }
 
@@ -1141,10 +1347,21 @@ export class GameScene extends Phaser.Scene {
     );
     const nextX = enemy.x + Math.sign(differenceX) * distance;
     const nextY = enemy.y + Math.sign(differenceY) * distance;
-    if (this.canOccupy(nextX, nextY, ENEMY_RADIUS)) {
+    if (this.canEnemyOccupy(enemy, nextX, nextY)) {
       enemy.x = nextX;
       enemy.y = nextY;
     }
+  }
+
+  private canEnemyOccupy(enemy: EnemyData, x: number, y: number): boolean {
+    if (!this.canOccupy(x, y, ENEMY_RADIUS)) {
+      return false;
+    }
+    return this.enemies.every((other) => (
+      other === enemy
+      || other.isDead
+      || Phaser.Math.Distance.Between(x, y, other.x, other.y) >= ENEMY_RADIUS * 2
+    ));
   }
 
   private nearestCell(x: number, y: number): MazeCellCenter {
@@ -1241,6 +1458,8 @@ export class GameScene extends Phaser.Scene {
       0,
       this.hp - ENEMY_ATTACK_DAMAGE * this.settings.enemyAttack,
     );
+    this.hitFlashTime = 200;
+    this.tookDamageSinceLastFrame = true;
     if (this.hp === 0) {
       this.finishGame('defeated');
     }
@@ -1274,7 +1493,11 @@ export class GameScene extends Phaser.Scene {
     const visible = this.isVisibleAt(enemy.x, enemy.y);
     const screenX = this.playerScreenX + enemy.x - this.playerWorldX;
     const screenY = this.playerScreenY + enemy.y - this.playerWorldY;
-    enemy.body.setPosition(screenX, screenY).setVisible(visible);
+    enemy.body.setPosition(screenX, screenY)
+      .setVisible(visible)
+      .setScale(enemy.hitFlashTime > 0 ? 1.25 : 1)
+      .setFillStyle(enemy.hitFlashTime > 0 ? 0xffdf72 : 0xe05252)
+      .setStrokeStyle(enemy.hitFlashTime > 0 ? 5 : 2, enemy.hitFlashTime > 0 ? 0xffffff : 0xffb0a8);
     enemy.hand.setPosition(screenX, screenY).setVisible(visible).clear();
     if (visible) {
       const directionX = Math.cos(enemy.angle);

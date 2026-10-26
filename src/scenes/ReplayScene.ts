@@ -4,8 +4,11 @@ import { createSeededRandom, createMaze } from '../game/Maze';
 import type { ReplayFrame, RankingCategory, RankingEntry } from '../game/Ranking';
 
 interface ReplaySceneData {
-  category: RankingCategory;
+  category?: RankingCategory;
   entry: RankingEntry;
+  title?: string;
+  returnScene?: string;
+  rankingScrollOffset?: number;
 }
 
 const SEEK_X = 180;
@@ -14,6 +17,8 @@ const SEEK_Y = 635;
 const BOARD_TOP = 120;
 const BOARD_HEIGHT = 430;
 const BOARD_SCALE_Y = BOARD_HEIGHT / 560;
+const DAMAGE_FLASH_DURATION_MS = 200;
+const KEY_PICKUP_DURATION_MS = 900;
 
 function replayY(y: number): number {
   return BOARD_TOP + (y - 112) * BOARD_SCALE_Y;
@@ -22,6 +27,9 @@ function replayY(y: number): number {
 export class ReplayScene extends Phaser.Scene {
   private entry!: RankingEntry;
   private category!: RankingCategory;
+  private replayTitle?: string;
+  private returnScene?: string;
+  private rankingScrollOffset = 0;
   private frames: ReplayFrame[] = [];
   private durationMs = 0;
   private currentTimeMs = 0;
@@ -36,7 +44,14 @@ export class ReplayScene extends Phaser.Scene {
   private playerDirection!: Phaser.GameObjects.Graphics;
   private chestGraphics!: Phaser.GameObjects.Graphics;
   private enemyGraphics!: Phaser.GameObjects.Graphics;
+  private doorGraphics!: Phaser.GameObjects.Graphics;
+  private statusBarGraphics!: Phaser.GameObjects.Graphics;
+  private keyPickupGraphics!: Phaser.GameObjects.Graphics;
   private keyCountText!: Phaser.GameObjects.Text;
+  private statusText!: Phaser.GameObjects.Text;
+  private doorStatusText!: Phaser.GameObjects.Text;
+  private keyPickupText!: Phaser.GameObjects.Text;
+  private exitDoorBounds!: { x: number; y: number; width: number; height: number };
   private chests: ChestData[] = [];
 
   constructor() {
@@ -45,7 +60,10 @@ export class ReplayScene extends Phaser.Scene {
 
   init(data: ReplaySceneData): void {
     this.entry = data.entry;
-    this.category = data.category;
+    this.category = data.category ?? 'RSG';
+    this.replayTitle = data.title;
+    this.returnScene = data.returnScene;
+    this.rankingScrollOffset = data.rankingScrollOffset ?? 0;
     this.frames = data.entry.replay ?? [];
     this.durationMs = this.frames.at(-1)?.timeMs ?? 0;
     this.currentTimeMs = 0;
@@ -55,10 +73,17 @@ export class ReplayScene extends Phaser.Scene {
 
   create(): void {
     const maze = createMaze(this.entry.seed ?? 0);
-    this.chests = createInitialChests(
-      maze.walkableCells,
-      createSeededRandom((this.entry.seed ?? 0) ^ 0x5f3759df),
-    );
+    this.chests = this.entry.chestPositions
+      ? this.entry.chestPositions.map(({ x, y }, index) => ({
+        x,
+        y,
+        isCorrect: ((this.entry.correctChestMask ?? 0) & (1 << index)) !== 0,
+        isOpened: false,
+      }))
+      : createInitialChests(
+        maze.walkableCells,
+        createSeededRandom((this.entry.seed ?? 0) ^ 0x5f3759df),
+      ).map((chest) => ({ ...chest, isCorrect: false }));
     this.cameras.main.setBackgroundColor('#101722');
     const background = this.add.graphics();
     background.fillStyle(0x172333, 1);
@@ -71,16 +96,15 @@ export class ReplayScene extends Phaser.Scene {
     for (const wall of maze.walls) {
       walls.fillRect(wall.x, replayY(wall.y), wall.width, wall.height * BOARD_SCALE_Y);
     }
-    const doorGraphics = this.add.graphics();
     const doorWidth = maze.exitDoor.isVertical ? 26 : 56;
     const doorHeight = maze.exitDoor.isVertical ? 56 : 26;
-    doorGraphics.fillStyle(0x58c4b8, 1);
-    doorGraphics.fillRect(
-      maze.exitDoor.x - doorWidth / 2,
-      replayY(maze.exitDoor.y) - doorHeight * BOARD_SCALE_Y / 2,
-      doorWidth,
-      doorHeight * BOARD_SCALE_Y,
-    );
+    this.exitDoorBounds = {
+      x: maze.exitDoor.x - doorWidth / 2,
+      y: replayY(maze.exitDoor.y) - doorHeight * BOARD_SCALE_Y / 2,
+      width: doorWidth,
+      height: doorHeight * BOARD_SCALE_Y,
+    };
+    this.doorGraphics = this.add.graphics().setDepth(4);
 
     this.chestGraphics = this.add.graphics().setDepth(3);
     this.enemyGraphics = this.add.graphics().setDepth(5);
@@ -92,7 +116,43 @@ export class ReplayScene extends Phaser.Scene {
       fontSize: '22px',
       color: '#f5d58a',
     });
-    const rankingTitle = this.category === 'DEV' ? '開発ランキング' : `${this.category}ランキング`;
+    this.statusText = this.add.text(36, 54, '', {
+      fontFamily: 'monospace',
+      fontSize: '17px',
+      color: '#f5f1e8',
+    });
+    this.statusBarGraphics = this.add.graphics().setDepth(2);
+    this.add.text(952, 14, 'HP', {
+      fontFamily: 'monospace',
+      fontSize: '15px',
+      color: '#b7c9d8',
+    });
+    this.add.text(952, 41, 'EG', {
+      fontFamily: 'monospace',
+      fontSize: '15px',
+      color: '#b7c9d8',
+    });
+    this.doorStatusText = this.add.text(640, 78, '', {
+      fontFamily: 'sans-serif',
+      fontSize: '18px',
+      color: '#f5f1e8',
+      backgroundColor: '#101722',
+      padding: { x: 10, y: 4 },
+    }).setOrigin(0.5);
+    this.keyPickupText = this.add.text(0, 0, '鍵を獲得！', {
+      fontFamily: 'sans-serif',
+      fontSize: '20px',
+      color: '#f5d58a',
+      stroke: '#101722',
+      strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(9).setVisible(false);
+    this.keyPickupGraphics = this.add.graphics().setDepth(8);
+    const rankingTitle = this.replayTitle
+      ?? (this.category === 'DEV'
+        ? '開発ランキング'
+        : this.category === 'DTH'
+          ? 'デスランキング'
+          : `${this.category}ランキング`);
     this.add.text(640, 34, `${rankingTitle} リプレイ`, {
       fontFamily: 'sans-serif',
       fontSize: '28px',
@@ -145,13 +205,22 @@ export class ReplayScene extends Phaser.Scene {
       this.isSeeking = false;
     });
 
-    const seedButton = this.add.text(640, 687, `Seed: ${this.entry.seed ?? '不明'}　（クリックでタイトルへ）`, {
+    const seedButton = this.add.text(
+      640,
+      687,
+      this.returnScene
+        ? 'リザルトへ戻る（クリック）'
+        : `Seed: ${this.entry.seed ?? '不明'}　（クリックでタイトルへ）`,
+      {
       fontFamily: 'monospace',
       fontSize: '17px',
       color: '#f5d58a',
-    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      },
+    ).setOrigin(0.5).setInteractive({ useHandCursor: true });
     seedButton.on('pointerdown', () => {
-      if (this.entry.seed !== undefined) {
+      if (this.returnScene) {
+        this.returnToScene();
+      } else if (this.entry.seed !== undefined) {
         this.scene.start('TitleScene', { seed: this.entry.seed });
       }
     });
@@ -167,9 +236,17 @@ export class ReplayScene extends Phaser.Scene {
         this.seekBy(5000);
       }
     });
-    this.input.keyboard?.on('keydown-ESC', () => this.scene.start('RankingScene', {
-      developer: this.category === 'DEV',
-    }));
+    this.input.keyboard?.on('keydown-ESC', () => {
+      if (this.returnScene) {
+        this.returnToScene();
+      } else {
+        this.scene.start('RankingScene', {
+          developer: this.category === 'DEV',
+          death: this.category === 'DTH',
+          scrollOffset: this.rankingScrollOffset,
+        });
+      }
+    });
     this.renderFrame();
   }
 
@@ -242,6 +319,46 @@ export class ReplayScene extends Phaser.Scene {
       screenY + Math.sin(angle) * 30 * BOARD_SCALE_Y,
     );
     this.keyCountText.setText(`鍵: ${stateFrame.keyCount}/3`);
+    const hp = Phaser.Math.Linear(previous.hp ?? 10, next.hp ?? previous.hp ?? 10, progress);
+    const energy = Phaser.Math.Linear(previous.energy ?? 1, next.energy ?? previous.energy ?? 1, progress);
+    this.statusText.setText(`HP: ${hp.toFixed(1)}　EG: ${energy.toFixed(2)}`);
+    const hpMax = stateFrame.hpMax ?? 10;
+    const energyMax = stateFrame.energyMax ?? 1;
+    this.drawStatusBar(985, 14, 240, 10, hp / hpMax, 0xe8876b);
+    this.drawStatusBar(985, 41, 240, 10, energy / energyMax, 0x58c4b8);
+    this.drawExitDoor(stateFrame.keyCount);
+    let lastDamageFrame: ReplayFrame | undefined;
+    for (let index = Math.min(nextIndex, this.frames.length - 1); index >= 0; index -= 1) {
+      const frame = this.frames[index];
+      if (frame.tookDamage === true && frame.timeMs <= this.currentTimeMs) {
+        lastDamageFrame = frame;
+        break;
+      }
+    }
+    const tookDamage = lastDamageFrame !== undefined
+      && this.currentTimeMs - lastDamageFrame.timeMs < DAMAGE_FLASH_DURATION_MS;
+    this.player.setFillStyle(tookDamage ? 0xff3b3b : 0x58c4b8);
+    this.player.setStrokeStyle(tookDamage ? 5 : 3, tookDamage ? 0xffffff : 0xd8fff4);
+    let lastKeyFrame: ReplayFrame | undefined;
+    for (let index = Math.min(nextIndex, this.frames.length - 1); index >= 0; index -= 1) {
+      const frame = this.frames[index];
+      if (frame.keyAcquired === true && frame.timeMs <= this.currentTimeMs) {
+        lastKeyFrame = frame;
+        break;
+      }
+    }
+    const keyAge = lastKeyFrame ? this.currentTimeMs - lastKeyFrame.timeMs : KEY_PICKUP_DURATION_MS;
+    const keyProgress = Phaser.Math.Clamp(keyAge / KEY_PICKUP_DURATION_MS, 0, 1);
+    const showingKeyPickup = lastKeyFrame !== undefined && keyAge < KEY_PICKUP_DURATION_MS;
+    this.keyPickupText
+      .setPosition(x, screenY - 48)
+      .setVisible(showingKeyPickup)
+      .setAlpha(1 - keyProgress);
+    this.keyPickupGraphics.clear().setAlpha(1 - keyProgress);
+    if (showingKeyPickup) {
+      this.keyPickupGraphics.lineStyle(5, 0xf5d58a, 1);
+      this.keyPickupGraphics.strokeCircle(x, screenY, 24 + keyProgress * 28);
+    }
 
     this.chestGraphics.clear();
     this.chests.forEach((chest, index) => {
@@ -251,30 +368,125 @@ export class ReplayScene extends Phaser.Scene {
       this.chestGraphics.fillRect(chest.x - 12, chestY - 8 * BOARD_SCALE_Y, 24, 16 * BOARD_SCALE_Y);
       this.chestGraphics.fillStyle(isOpened ? 0x84909a : 0xe2ad62, 1);
       this.chestGraphics.fillRect(chest.x - 12, chestY - 8 * BOARD_SCALE_Y, 24, 4 * BOARD_SCALE_Y);
+      if (chest.isCorrect) {
+        const keyX = chest.x + 18;
+        const keyY = chestY - 17;
+        this.chestGraphics.lineStyle(3, 0xf5d58a, 1);
+        this.chestGraphics.strokeCircle(keyX, keyY, 5);
+        this.chestGraphics.lineBetween(keyX + 5, keyY, keyX + 16, keyY);
+        this.chestGraphics.lineBetween(keyX + 11, keyY, keyX + 11, keyY + 4);
+        this.chestGraphics.lineBetween(keyX + 15, keyY, keyX + 15, keyY + 3);
+      }
     });
 
     this.enemyGraphics.clear();
-    this.enemyGraphics.fillStyle(0xe05252, 1);
-    for (const enemyIndex of [0, 2]) {
-      const previousX = previous.enemies[enemyIndex];
-      const previousY = previous.enemies[enemyIndex + 1];
-      const nextX = next.enemies[enemyIndex];
-      const nextY = next.enemies[enemyIndex + 1];
-      const isAlive = (
-        stateFrame.enemies[enemyIndex] !== 0
-        || stateFrame.enemies[enemyIndex + 1] !== 0
-      );
-      const enemyX = previousX !== 0 || previousY !== 0
-        ? Phaser.Math.Linear(previousX, nextX || previousX, progress)
-        : nextX;
-      const enemyY = previousX !== 0 || previousY !== 0
-        ? Phaser.Math.Linear(previousY, nextY || previousY, progress)
-        : nextY;
-      if (isAlive) {
-        this.enemyGraphics.fillCircle(enemyX, replayY(enemyY), 20);
+    const enemyCount = this.frames.reduce(
+      (count, frame) => Math.max(count, Math.floor(frame.enemies.length / 2)),
+      0,
+    );
+    for (let enemySlot = 0; enemySlot < enemyCount; enemySlot += 1) {
+      const enemyIndex = enemySlot * 2;
+      const previousX = previous.enemies[enemyIndex] ?? next.enemies[enemyIndex] ?? 0;
+      const previousY = previous.enemies[enemyIndex + 1] ?? next.enemies[enemyIndex + 1] ?? 0;
+      const nextX = next.enemies[enemyIndex] ?? previousX;
+      const nextY = next.enemies[enemyIndex + 1] ?? previousY;
+      const recordedEnemyHp = stateFrame.enemyHp?.[enemySlot];
+      const isAlive = recordedEnemyHp === undefined
+        ? (stateFrame.enemies[enemyIndex] ?? 0) !== 0
+          || (stateFrame.enemies[enemyIndex + 1] ?? 0) !== 0
+        : recordedEnemyHp > 0;
+      const enemyX = Phaser.Math.Linear(previousX, nextX, progress);
+      const enemyY = Phaser.Math.Linear(previousY, nextY, progress);
+      let lastEnemyDamageFrame: ReplayFrame | undefined;
+      for (let index = Math.min(nextIndex, this.frames.length - 1); index >= 0; index -= 1) {
+        const frame = this.frames[index];
+        if (
+          frame.enemyTookDamage?.[enemySlot] === true
+          && frame.timeMs <= this.currentTimeMs
+        ) {
+          lastEnemyDamageFrame = frame;
+          break;
+        }
+      }
+      const enemyHitAge = lastEnemyDamageFrame
+        ? this.currentTimeMs - lastEnemyDamageFrame.timeMs
+        : DAMAGE_FLASH_DURATION_MS;
+      const enemyHit = enemyHitAge < DAMAGE_FLASH_DURATION_MS;
+      if (isAlive || enemyHit) {
+        const enemyScreenY = replayY(enemyY);
+        const enemyHp = stateFrame.enemyHp?.[enemySlot] ?? stateFrame.enemyHpMax ?? 20;
+        const enemyHpMax = stateFrame.enemyHpMax ?? 20;
+        this.enemyGraphics.fillStyle(enemyHit ? 0xffdf72 : 0xe05252, 1);
+        this.enemyGraphics.fillCircle(enemyX, enemyScreenY, 20);
+        if (enemyHit) {
+          this.enemyGraphics.lineStyle(4, 0xffffff, 1);
+          this.enemyGraphics.strokeCircle(enemyX, enemyScreenY, 25);
+        }
+        if (isAlive) {
+          this.enemyGraphics.fillStyle(0x26384a, 1);
+          this.enemyGraphics.fillRect(enemyX - 20, enemyScreenY - 29, 40, 5);
+          this.enemyGraphics.fillStyle(0xe8876b, 1);
+          this.enemyGraphics.fillRect(
+            enemyX - 19,
+            enemyScreenY - 28,
+            38 * Phaser.Math.Clamp(enemyHp / enemyHpMax, 0, 1),
+            3,
+          );
+        }
       }
     }
     this.updateControls();
+  }
+
+  private drawStatusBar(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    value: number,
+    color: number,
+  ): void {
+    this.statusBarGraphics.fillStyle(0x26384a, 1);
+    this.statusBarGraphics.fillRect(x, y, width, height);
+    this.statusBarGraphics.fillStyle(color, 1);
+    this.statusBarGraphics.fillRect(
+      x + 2,
+      y + 2,
+      (width - 4) * Phaser.Math.Clamp(value, 0, 1),
+      height - 4,
+    );
+    this.statusBarGraphics.lineStyle(1, 0x7f9bb3, 1);
+    this.statusBarGraphics.strokeRect(x, y, width, height);
+  }
+
+  private drawExitDoor(keyCount: number): void {
+    const canEscape = keyCount >= 3;
+    this.doorGraphics.clear();
+    this.doorGraphics.fillStyle(canEscape ? 0x58c4b8 : 0x8c554e, 1);
+    this.doorGraphics.fillRect(
+      this.exitDoorBounds.x,
+      this.exitDoorBounds.y,
+      this.exitDoorBounds.width,
+      this.exitDoorBounds.height,
+    );
+    this.doorGraphics.lineStyle(2, canEscape ? 0xd8fff4 : 0xf2b09b, 1);
+    this.doorGraphics.strokeRect(
+      this.exitDoorBounds.x,
+      this.exitDoorBounds.y,
+      this.exitDoorBounds.width,
+      this.exitDoorBounds.height,
+    );
+    this.doorStatusText
+      .setText(canEscape ? '脱出可能' : `施錠中　鍵 ${keyCount}/3`)
+      .setColor(canEscape ? '#58c4b8' : '#f2b09b');
+  }
+
+  private returnToScene(): void {
+    if (!this.returnScene) {
+      return;
+    }
+    this.scene.stop();
+    this.scene.resume(this.returnScene);
   }
 
   private updateControls(): void {

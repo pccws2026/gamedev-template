@@ -249,7 +249,7 @@ export function seedFromInput(input: string): number {
   const value = input.trim();
   if (/^\d+$/.test(value)) {
     const numericSeed = Number(value);
-    if (Number.isSafeInteger(numericSeed)) {
+    if (Number.isSafeInteger(numericSeed) && String(numericSeed) === value) {
       return numericSeed;
     }
   }
