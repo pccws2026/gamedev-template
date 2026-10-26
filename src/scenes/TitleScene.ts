@@ -1,0 +1,356 @@
+import Phaser from 'phaser';
+import {
+  createRandomSeed,
+  LAST_SEED_STORAGE_KEY,
+  seedFromInput,
+} from '../game/Maze';
+import {
+  applySystemCommand,
+  getGameSettings,
+  parseRankingDeletionCommand,
+} from '../game/GameSettings';
+import { getGameMode, setGameMode } from '../game/GameMode';
+
+export class TitleScene extends Phaser.Scene {
+  private seedInput = '';
+  private seedInputText!: Phaser.GameObjects.Text;
+  private modeButton?: Phaser.GameObjects.Text;
+  private seedFixedButton?: Phaser.GameObjects.Text;
+  private modeDescriptionText?: Phaser.GameObjects.Text;
+  private lastSeed = '';
+  private seedInputFocused = false;
+  private seedFixed = false;
+  private rankingSeedPending = false;
+
+  init(data?: { seed?: number; clearSeed?: boolean }): void {
+    this.seedInput = data?.clearSeed
+      ? ''
+      : data?.seed === undefined ? '' : String(data.seed);
+    this.rankingSeedPending = !data?.clearSeed && data?.seed !== undefined;
+  }
+
+  constructor() {
+    super('TitleScene');
+  }
+
+  create(): void {
+    this.seedInputFocused = false;
+    const previousSeed = localStorage.getItem(LAST_SEED_STORAGE_KEY);
+    this.lastSeed = previousSeed && /^\d+$/.test(previousSeed) ? previousSeed : '';
+    if (this.seedFixed && this.seedInput === '') {
+      this.seedInput = this.lastSeed || String(createRandomSeed());
+      this.lastSeed = this.seedInput;
+    }
+    this.cameras.main.setBackgroundColor('#101722');
+
+    const background = this.add.graphics();
+    background.fillStyle(0x101722, 1);
+    background.fillRect(0, 0, 1280, 720);
+    background.fillStyle(0x172333, 1);
+    background.fillRect(0, 0, 1280, 96);
+    background.fillRect(0, 624, 1280, 96);
+
+    this.add.text(294, 48, 'ゲームモード', {
+      fontFamily: 'sans-serif',
+      fontSize: '18px',
+      color: '#b7c9d8',
+    }).setOrigin(0.5);
+    this.createModeButton();
+    this.createSeedFixedButton();
+
+    this.drawMazeDecoration();
+
+    const panel = this.add.graphics();
+    panel.fillStyle(0x1c2c3d, 0.96);
+    panel.fillRoundedRect(250, 108, 780, 508, 18);
+    panel.lineStyle(2, 0x526b7b, 1);
+    panel.strokeRoundedRect(250, 108, 780, 508, 18);
+    panel.fillStyle(0x58c4b8, 1);
+    panel.fillRect(250, 108, 780, 6);
+
+    this.add.text(640, 190, 'ESCAPE ROOM', {
+      fontFamily: 'sans-serif',
+      fontSize: '56px',
+      color: '#f5f1e8',
+      stroke: '#101722',
+      strokeThickness: 8,
+    }).setOrigin(0.5);
+    this.add.text(640, 260, '鍵を集めて、迷路から脱出しよう', {
+      fontFamily: 'sans-serif',
+      fontSize: '20px',
+      color: '#b7c9d8',
+      letterSpacing: 2,
+    }).setOrigin(0.5);
+
+    const keyIcon = this.add.graphics();
+    keyIcon.lineStyle(5, 0xf5d58a, 1);
+    keyIcon.strokeCircle(612, 330, 16);
+    keyIcon.lineBetween(628, 330, 678, 330);
+    keyIcon.lineBetween(660, 330, 660, 344);
+    keyIcon.lineBetween(672, 330, 672, 340);
+
+    this.add.text(640, 380, '宝箱から鍵を3つ集めて扉から脱出', {
+      fontFamily: 'sans-serif',
+      fontSize: '24px',
+      color: '#f5d58a',
+    }).setOrigin(0.5);
+
+    const startPrompt = this.add.text(640, 432, 'Enterキーでゲーム開始', {
+      fontFamily: 'sans-serif',
+      fontSize: '28px',
+      color: '#58c4b8',
+      stroke: '#101722',
+      strokeThickness: 5,
+    }).setOrigin(0.5);
+    this.tweens.add({
+      targets: startPrompt,
+      alpha: 0.35,
+      duration: 900,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut',
+    });
+
+    this.add.text(640, 462, '迷路シード（数字・文字）', {
+      fontFamily: 'sans-serif',
+      fontSize: '17px',
+      color: '#f5f1e8',
+    }).setOrigin(0.5);
+
+    const seedBox = this.add.graphics();
+    seedBox.fillStyle(0x101722, 1);
+    seedBox.fillRoundedRect(510, 476, 260, 34, 6);
+    seedBox.lineStyle(2, 0x58c4b8, 1);
+    seedBox.strokeRoundedRect(510, 476, 260, 34, 6);
+    this.seedInputText = this.add.text(640, 493, 'ランダム', {
+      fontFamily: 'sans-serif',
+      fontSize: '18px',
+      color: '#f5d58a',
+    }).setOrigin(0.5);
+    this.updateSeedInputText();
+    this.add.zone(640, 493, 260, 34)
+      .setInteractive({ useHandCursor: true })
+      .on('pointerdown', () => {
+        this.seedInputFocused = true;
+        this.seedInput = '';
+        this.updateSeedInputText();
+      });
+
+    if (this.lastSeed) {
+      const previousSeedText = this.add.text(640, 525, `前回のシード：${this.lastSeed}`, {
+        fontFamily: 'sans-serif',
+        fontSize: '15px',
+        color: '#b7c9d8',
+      }).setOrigin(0.5).setInteractive();
+      previousSeedText.on('pointerdown', () => {
+        this.seedInputFocused = true;
+        this.seedInput = this.lastSeed;
+        this.updateSeedInputText();
+      });
+    }
+
+    this.add.text(640, 550, '移動：WASD / 矢印　宝箱/攻撃：Space　ポーズ：Esc', {
+      fontFamily: 'sans-serif',
+      fontSize: '15px',
+      color: '#b7c9d8',
+    }).setOrigin(0.5);
+
+    this.add.text(640, 574, 'ダッシュ：Shift', {
+      fontFamily: 'sans-serif',
+      fontSize: '15px',
+      color: '#b7c9d8',
+    }).setOrigin(0.5);
+
+    this.modeDescriptionText = this.add.text(640, 598, '', {
+      fontFamily: 'sans-serif',
+      fontSize: '15px',
+      color: '#f5d58a',
+    }).setOrigin(0.5);
+    this.updateModeDescription();
+
+    const rankingButton = this.add.text(640, 660, 'ランキング', {
+      fontFamily: 'sans-serif',
+      fontSize: '20px',
+      color: '#f5d58a',
+      backgroundColor: '#26384a',
+      padding: { x: 18, y: 8 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    rankingButton.on('pointerdown', () => this.scene.start('RankingScene', { developer: false }));
+    rankingButton.on('pointerover', () => rankingButton.setColor('#f5f1e8'));
+    rankingButton.on('pointerout', () => rankingButton.setColor('#f5d58a'));
+
+    this.input.keyboard?.on('keydown', this.handleSeedInput, this);
+    this.input.keyboard?.on('keydown-ENTER', this.startGame, this);
+  }
+
+  private createModeButton(): void {
+    const button = this.add.text(474, 48, '', {
+      fontFamily: 'sans-serif',
+      fontSize: '18px',
+      color: '#58c4b8',
+      backgroundColor: '#26384a',
+      padding: { x: 14, y: 7 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    button.on('pointerdown', () => {
+      setGameMode(getGameMode() === 'limited' ? 'elapsed' : 'limited');
+      this.refreshModeButtons();
+    });
+    this.modeButton = button;
+    this.refreshModeButtons();
+  }
+
+  private refreshModeButtons(): void {
+    this.modeButton?.setText(
+      getGameMode() === 'limited' ? '制限モード' : '経過モード',
+    );
+    this.updateModeDescription();
+  }
+
+  private createSeedFixedButton(): void {
+    this.seedFixedButton = this.add.text(700, 48, '', {
+      fontFamily: 'sans-serif',
+      fontSize: '18px',
+      color: '#b7c9d8',
+      backgroundColor: '#26384a',
+      padding: { x: 14, y: 7 },
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    this.seedFixedButton.on('pointerdown', () => {
+      this.seedFixed = !this.seedFixed;
+      if (this.seedFixed) {
+        this.seedInput = this.lastSeed || String(createRandomSeed());
+        this.lastSeed = this.seedInput;
+      } else {
+        this.seedInput = '';
+      }
+      this.updateSeedInputText();
+      this.updateSeedFixedButton();
+    });
+    this.updateSeedFixedButton();
+  }
+
+  private updateSeedFixedButton(): void {
+    this.seedFixedButton?.setText(
+      this.seedFixed ? 'シード固定：ON' : 'シード固定：OFF',
+    );
+    this.seedFixedButton?.setColor(this.seedFixed ? '#58c4b8' : '#b7c9d8');
+  }
+
+  private updateModeDescription(): void {
+    const settings = getGameSettings();
+    const modeDescription = getGameMode() === 'limited'
+      ? `制限時間：${settings.roundTimeSeconds}秒`
+      : `経過時間：${settings.elapsedTimeStartSeconds}秒から`;
+    const healthDescription = settings.developerMode ? 'HP・EGなし' : 'HP：10';
+    const developerDescription = settings.developerMode ? '鍵宝箱は接触で取得' : '';
+    this.modeDescriptionText?.setText(
+      `${healthDescription}${developerDescription ? `　／　${developerDescription}` : ''}　／　${modeDescription}`,
+    );
+  }
+
+  private drawMazeDecoration(): void {
+    const maze = this.add.graphics();
+    maze.lineStyle(15, 0x26384a, 1);
+    const paths: readonly [number, number, number, number][] = [
+      [70, 160, 210, 160],
+      [210, 160, 210, 270],
+      [70, 270, 210, 270],
+      [70, 160, 70, 430],
+      [70, 430, 230, 430],
+      [230, 430, 230, 540],
+      [1050, 160, 1210, 160],
+      [1050, 160, 1050, 300],
+      [1050, 300, 1210, 300],
+      [1210, 160, 1210, 540],
+      [1050, 540, 1210, 540],
+      [1050, 420, 1050, 540],
+    ];
+    for (const [x1, y1, x2, y2] of paths) {
+      maze.lineBetween(x1, y1, x2, y2);
+    }
+
+    maze.lineStyle(3, 0x58c4b8, 0.75);
+    maze.lineBetween(90, 205, 185, 205);
+    maze.lineBetween(1095, 255, 1180, 255);
+    maze.fillStyle(0xf5d58a, 1);
+    maze.fillCircle(90, 205, 7);
+    maze.fillCircle(1180, 255, 7);
+  }
+
+  private handleSeedInput(event: KeyboardEvent): void {
+    if (!this.seedInputFocused || event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
+
+    if (event.key === 'Backspace') {
+      event.preventDefault();
+      this.seedInput = Array.from(this.seedInput).slice(0, -1).join('');
+      this.updateSeedInputText();
+    } else if (event.key.length === 1 && Array.from(this.seedInput).length < 32) {
+      this.seedInput += event.key;
+      this.updateSeedInputText();
+    }
+  }
+
+  private updateSeedInputText(): void {
+    this.seedInputText.setText(
+      this.seedInput || (this.seedInputFocused ? '入力中...' : 'ランダム'),
+    );
+  }
+
+  private startGame(): void {
+    const commandResult = applySystemCommand(this.seedInput);
+    if (commandResult === 'show-developer-ranking') {
+      this.scene.start('RankingScene', { developer: true });
+      return;
+    }
+    if (commandResult === 'show-death-ranking') {
+      this.scene.start('RankingScene', { death: true });
+      return;
+    }
+    if (commandResult === 'show-command-list') {
+      this.scene.start('CommandListScene');
+      return;
+    }
+    if (commandResult === 'show-ranking-delete-confirmation') {
+      const request = parseRankingDeletionCommand(this.seedInput);
+      if (request) {
+        this.scene.start('RankingDeleteScene', {
+          ...request,
+          returnScene: 'TitleScene',
+        });
+      }
+      return;
+    }
+    if (commandResult !== 'not-command') {
+      this.seedInput = this.seedFixed ? this.lastSeed : '';
+      if (this.seedFixed) {
+        this.updateSeedInputText();
+      } else {
+        this.seedInputText.setText(
+          commandResult === 'applied'
+            ? '設定を適用しました'
+            : commandResult === 'ignored'
+              ? '敵にエネルギーはありません'
+              : 'コマンドを確認してください',
+        );
+      }
+      if (commandResult === 'applied') {
+        this.updateModeDescription();
+      }
+      return;
+    }
+
+    const seed = this.seedInput.trim() === ''
+      ? createRandomSeed()
+      : seedFromInput(this.seedInput);
+    if (this.rankingSeedPending && !this.seedFixed) {
+      this.seedInput = '';
+    }
+    this.rankingSeedPending = false;
+    this.scene.start('GameScene', {
+      seed,
+      seedWasSet: this.seedFixed || this.seedInput.trim() !== '',
+      mode: getGameMode(),
+    });
+  }
+}

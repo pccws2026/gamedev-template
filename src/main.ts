@@ -1,5 +1,11 @@
 import Phaser from 'phaser';
-import { HelloScene } from './scenes/HelloScene';
+import { GameScene } from './scenes/GameScene';
+import { CommandListScene } from './scenes/CommandListScene';
+import { ResultScene } from './scenes/ResultScene';
+import { RankingScene } from './scenes/RankingScene';
+import { RankingDeleteScene } from './scenes/RankingDeleteScene';
+import { ReplayScene } from './scenes/ReplayScene';
+import { TitleScene } from './scenes/TitleScene';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -11,7 +17,7 @@ const config: Phaser.Types.Core.GameConfig = {
     width: 1280,
     height: 720,
   },
-  scene: [HelloScene],
+  scene: [TitleScene, GameScene, ResultScene, RankingScene, ReplayScene, CommandListScene, RankingDeleteScene],
 };
 
 const game = new Phaser.Game(config);
